@@ -13,10 +13,10 @@ import com.softbei.scenicai.repository.FeedbackRecordRepository;
 import com.softbei.scenicai.repository.KnowledgeEntryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -37,11 +37,12 @@ public class ChatService {
     public ChatResponse ask(ChatRequest request) {
         long start = System.currentTimeMillis();
         String question = request.question().trim();
+        String matchingText = expandQuestionForMatching(question);
         String emotion = detectEmotion(question);
         log.info("收到游客提问：{}，识别情绪：{}", question, emotion);
 
-        Attraction attraction = findBestAttraction(question);
-        KnowledgeEntry knowledge = findBestKnowledge(question);
+        Attraction attraction = findBestAttraction(matchingText);
+        KnowledgeEntry knowledge = findBestKnowledge(matchingText);
 
         String answer;
         List<ChatResponse.SourceCard> sources = new ArrayList<>();
@@ -49,10 +50,11 @@ public class ChatService {
         String matchedSource = "未命中";
         String sourceType = "FALLBACK";
 
-        int attractionScore = attraction == null ? 0 : scoreAttraction(question, attraction);
-        int knowledgeScore = knowledge == null ? 0 : scoreKnowledge(question, knowledge);
+        int attractionScore = attraction == null ? 0 : scoreAttraction(matchingText, attraction);
+        int knowledgeScore = knowledge == null ? 0 : scoreKnowledge(matchingText, knowledge);
+        boolean preferKnowledge = shouldPreferKnowledge(question);
 
-        if (attractionScore >= knowledgeScore && attraction != null && attractionScore > 0) {
+        if (!preferKnowledge && attractionScore >= knowledgeScore && attraction != null && attractionScore > 0) {
             answer = buildAttractionAnswer(attraction, emotion);
             sources.add(new ChatResponse.SourceCard(attraction.getName(), attraction.getHighlight(), "景点资料"));
             suggestions = List.of(
@@ -73,7 +75,7 @@ public class ChatService {
             matchedSource = knowledge.getTitle();
             sourceType = "KNOWLEDGE";
         } else {
-            answer = "我暂时没有从本地知识库里查到足够准确的依据。你可以换个问法，比如直接问景点名称、开放时间、门票、路线或服务设施。我会继续优先依据灵山胜境的资料，用中文给你更稳妥的回答。";
+            answer = "我暂时没有从本地知识库里查到足够准确的依据。你可以换个问法，比如直接问景点名称、开放时间、门票、路线或服务设施。我会继续优先依据灵山胜境资料给出更稳妥的导览建议。";
             suggestions = List.of(
                     "灵山大佛有什么亮点？",
                     "景区开放时间和门票怎么安排？",
@@ -90,7 +92,6 @@ public class ChatService {
                 .matchedSource(matchedSource)
                 .sourceType(sourceType)
                 .responseMillis(responseMillis)
-                .createdAt(LocalDateTime.now())
                 .build());
 
         log.info("问答完成，来源类型：{}，命中来源：{}，耗时：{}ms", sourceType, matchedSource, responseMillis);
@@ -104,7 +105,6 @@ public class ChatService {
                 .conversationId(request.recordId())
                 .helpful(Boolean.TRUE.equals(request.helpful()))
                 .comment(Optional.ofNullable(request.comment()).orElse(""))
-                .createdAt(LocalDateTime.now())
                 .build();
         feedbackRecordRepository.save(feedback);
         log.info("收到游客反馈，记录ID：{}，是否有帮助：{}", request.recordId(), request.helpful());
@@ -143,14 +143,13 @@ public class ChatService {
     }
 
     private Attraction findBestAttraction(String question) {
-        return attractionRepository.findAll().stream()
+        return attractionRepository.searchCandidates(question, PageRequest.of(0, 50)).stream()
                 .max(Comparator.comparingInt(item -> scoreAttraction(question, item)))
                 .orElse(null);
     }
 
     private KnowledgeEntry findBestKnowledge(String question) {
-        return knowledgeEntryRepository.findAll().stream()
-                .filter(entry -> Boolean.TRUE.equals(entry.getPublished()))
+        return knowledgeEntryRepository.searchPublishedCandidates(question, PageRequest.of(0, 50)).stream()
                 .max(Comparator.comparingInt(item -> scoreKnowledge(question, item)))
                 .orElse(null);
     }
@@ -208,6 +207,47 @@ public class ChatService {
             return "不满";
         }
         return "中性";
+    }
+
+    private String expandQuestionForMatching(String question) {
+        String lower = question.toLowerCase(Locale.ROOT);
+        StringBuilder expanded = new StringBuilder(question);
+
+        if (lower.contains("nine dragons") || lower.contains("sakyamuni") || lower.contains("bathing")) {
+            expanded.append(" 九龙灌浴 演出 表演 观看 观演 建议 几点 时间");
+        }
+        if (lower.contains("lingshan grand buddha") || lower.contains("grand buddha")) {
+            expanded.append(" 灵山大佛 大佛 亮点 介绍");
+        }
+        if (lower.contains("family") || lower.contains("children") || lower.contains("kids") || lower.contains("parent")) {
+            expanded.append(" 亲子 带孩子 儿童 路线 轻松");
+        }
+        if (lower.contains("route") || lower.contains("arranged") || lower.contains("arrange")) {
+            expanded.append(" 路线 推荐 游览 安排");
+        }
+        if (lower.contains("best time") || lower.contains("when")) {
+            expanded.append(" 什么时候 几点 时间 观看 建议");
+        }
+        if (lower.contains("highlight") || lower.contains("highlights")) {
+            expanded.append(" 亮点 必看 介绍");
+        }
+
+        return expanded.toString();
+    }
+
+    private boolean shouldPreferKnowledge(String question) {
+        String lower = question.toLowerCase(Locale.ROOT);
+        return lower.contains("when")
+                || lower.contains("best time")
+                || lower.contains("show")
+                || lower.contains("route")
+                || lower.contains("family")
+                || lower.contains("什么时候")
+                || lower.contains("几点")
+                || lower.contains("观演")
+                || lower.contains("演出")
+                || lower.contains("路线")
+                || lower.contains("亲子");
     }
 
     private boolean containsAny(String text, String... keywords) {

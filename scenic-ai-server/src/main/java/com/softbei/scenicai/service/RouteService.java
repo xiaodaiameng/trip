@@ -47,7 +47,7 @@ public class RouteService {
         List<String> tips = List.of(
                 "如果想减少步行压力，可以把观光车加入路线。",
                 "核心演艺项目建议提前查看当天场次，避免错过。",
-                "MVP 版本先按标签和热度推荐，后续可以接入拥堵感知与实时排队数据。"
+                "当前先按标签和热度推荐，后续可以接入拥堵感知与实时排队数据。"
         );
 
         RoutePlanResponse response = new RoutePlanResponse(title, durationHours, stops, tips);
@@ -87,7 +87,7 @@ public class RouteService {
         if ("情侣".equals(companionType) && attraction.getTags().stream().anyMatch(tag -> List.of("拍照", "夜游").contains(tag))) {
             return "氛围感和出片率都不错，适合情侣路线。";
         }
-        return "综合热度、停留时长和路线完整度后，适合作为 MVP 推荐点位。";
+        return "综合热度、停留时长和路线完整度后，适合作为本次游览的推荐点位。";
     }
 
     private String buildTitle(List<String> interests, int durationHours, String companionType) {

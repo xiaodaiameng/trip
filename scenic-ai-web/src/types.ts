@@ -4,6 +4,14 @@ export interface ApiResponse<T> {
   message: string
 }
 
+export interface PageResponse<T> {
+  content: T[]
+  totalElements: number
+  totalPages: number
+  size: number
+  number: number
+}
+
 export interface Overview {
   projectName: string
   scenicName: string

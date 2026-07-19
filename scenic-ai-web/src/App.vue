@@ -87,7 +87,7 @@ const navItems: Array<{ key: ViewKey; label: string }> = [
 
 const interestOptions = ['文化', '拍照', '亲子', '演艺', '夜游', '休闲']
 const categoryOptions = ['FAQ', '讲解', '路线', '服务']
-const assistantName = '薇薇'
+const assistantName = '小灵'
 const activeView = ref<ViewKey>('home')
 const pageBodyRef = ref<HTMLElement | null>(null)
 const apiBase = getApiBase()
@@ -145,7 +145,7 @@ narratorMessage.value = `${assistantName}待命中。`
 
 const adminForm = reactive({
   username: 'admin',
-  password: 'admin123',
+  password: '',
 })
 const adminProfile = ref<LoginResponse | null>(null)
 const adminLoading = ref(false)
@@ -184,17 +184,17 @@ const summaryStats = computed(() => [
   {
     label: '景点资料',
     value: `${attractions.value.length} 个`,
-    description: '适合首页展示、问答命中与路线组合',
+    description: '覆盖景点名称、亮点、开放时间和地图点位',
   },
   {
-    label: '服务能力',
+    label: '导览能力',
     value: `${overview.value?.mvpScope.length ?? 0} 项`,
-    description: '问答、讲解、推荐与后台能力已接入骨架',
+    description: '围绕景点讲解、路线规划和游客服务展开',
   },
   {
     label: '当前后端',
     value: connectionLabel.value,
-    description: '已统一中文接口提示、异常提示与日志语义',
+    description: '支撑景点资料、路线推荐和反馈记录读取',
   },
 ])
 
@@ -233,23 +233,23 @@ const visitorStats = computed(() => [
   {
     label: '热门问题',
     value: `${overview.value?.hotQuestions.length ?? 0} 条`,
-    description: '可直接点选常见问题，让薇薇快速回答',
+    description: '围绕大佛、演艺、门票、路线等游览场景',
   },
   {
     label: '导览状态',
     value: connectionLabel.value,
-    description: '问答、路线推荐和语音讲解按当前状态提供服务',
+    description: '景点讲解、路线推荐和语音播报按当前状态提供服务',
   },
 ])
 
 const digitalActivityLabel = computed(() => {
   if (speaking.value) {
-    return '薇薇播报中'
+    return '小灵播报中'
   }
   if (listening.value) {
-    return '薇薇正在听'
+    return '小灵正在听'
   }
-  return digitalOverlayOpen.value ? '薇薇在线' : '薇薇待机'
+  return digitalOverlayOpen.value ? '小灵在线' : '小灵待机'
 })
 
 const hearingStatusLabel = computed(() => {
@@ -285,10 +285,10 @@ function getRecognitionCtor() {
 
 function resolveRecognitionError(error: string) {
   if (error === 'not-allowed' || error === 'service-not-allowed') {
-    return '请先允许麦克风权限，然后再让薇薇听你说话。'
+    return '请先允许麦克风权限，然后再让小灵听你说话。'
   }
   if (error === 'no-speech') {
-    return '薇薇刚才没有听到有效语音，你可以再说一遍。'
+    return '小灵刚才没有听到有效语音，你可以再说一遍。'
   }
   if (error === 'audio-capture') {
     return '没有检测到可用麦克风，请检查设备后再试。'
@@ -662,17 +662,23 @@ function restoreAdminSession() {
   }
   try {
     adminProfile.value = JSON.parse(raw) as LoginResponse
+    if (adminProfile.value?.token) {
+      localStorage.setItem('scenic-admin-token', adminProfile.value.token)
+    }
   } catch {
     localStorage.removeItem('scenic-admin-profile')
+    localStorage.removeItem('scenic-admin-token')
   }
 }
 
 function persistAdminSession(profile: LoginResponse | null) {
   if (!profile) {
     localStorage.removeItem('scenic-admin-profile')
+    localStorage.removeItem('scenic-admin-token')
     return
   }
   localStorage.setItem('scenic-admin-profile', JSON.stringify(profile))
+  localStorage.setItem('scenic-admin-token', profile.token)
 }
 
 async function loadPublicData() {
@@ -709,7 +715,13 @@ async function loadAdminData() {
       `后台数据已刷新，当前累计 ${dashboardData.conversationCount} 条问答，满意度 ${dashboardData.satisfactionRate}%，热门问题是 ${dashboardData.hotQuestions.slice(0, 2).map((item) => item.name).join('、')}。`,
     )
   } catch (error) {
-    adminDataError.value = error instanceof Error ? error.message : '加载后台数据失败'
+    const message = error instanceof Error ? error.message : '加载后台数据失败'
+    adminDataError.value = message
+    if (message.includes('管理员登录')) {
+      adminMessage.value = message
+      adminProfile.value = null
+      persistAdminSession(null)
+    }
   } finally {
     adminDataLoading.value = false
   }
@@ -830,6 +842,7 @@ async function loginToAdmin() {
 
 function logoutAdmin() {
   adminProfile.value = null
+  localStorage.removeItem('scenic-admin-token')
   dashboard.value = null
   records.value = []
   knowledgeList.value = []
@@ -1006,21 +1019,21 @@ watch(digitalOverlayOpen, (isOpen) => {
       <div class="hero-content">
         <div class="hero-main">
           <div>
-            <p class="eyebrow">灵山胜境导览系统</p>
+            <p class="eyebrow">灵境智游</p>
             <h1 class="hero-title-block">
               <GradientTextTitle
-                text="景区导览服务（AI 数字人）"
+                text="LingVista灵言"
                 :colors="['#f5eefe', '#c084fc', '#8b5cf6', '#f5eefe']"
                 :animation-speed="5"
                 direction="horizontal"
               />
             </h1>
             <p class="hero-copy">
-              {{ overview?.welcomeMessage ?? '你好，我是灵山胜境中文导览助手，正在为你准备景点讲解、路线推荐与后台运营看板。' }}
+              古人有云，今人有灵。
             </p>
             <div class="hero-actions">
               <button type="button" class="primary-button hero-button" @click="openWeiwei">
-                打开薇薇
+                打开小灵
               </button>
               <button type="button" class="ghost-button hero-button" @click="selectView('chat')">
                 开始提问
@@ -1070,7 +1083,7 @@ watch(digitalOverlayOpen, (isOpen) => {
             class="digital-human-hint"
             @click.stop="openWeiwei"
           >
-            打开薇薇
+            打开小灵
           </button>
         </div>
         <div v-show="digitalOverlayOpen" class="digital-console">
@@ -1083,7 +1096,7 @@ watch(digitalOverlayOpen, (isOpen) => {
             </label>
           </div>
           <div class="digital-speech">
-            <p class="digital-label">灵山中文数字导览官</p>
+            <p class="digital-label">灵境智游数字导览官</p>
             <p class="digital-line">{{ spokenContent }}</p>
             <p class="digital-note">{{ narratorMessage }}</p>
           </div>
@@ -1138,7 +1151,7 @@ watch(digitalOverlayOpen, (isOpen) => {
         <div class="section-head">
           <div>
             <p class="section-kicker">游客端概览</p>
-            <h2><ScrollFloatText text="从问答到路线，一屏看清当前系统骨架" /></h2>
+            <h2><ScrollFloatText text="景点、路线、运营数据集中展示" /></h2>
           </div>
           <button type="button" class="ghost-button" @click="loadPublicData">刷新游客数据</button>
         </div>
@@ -1175,13 +1188,13 @@ watch(digitalOverlayOpen, (isOpen) => {
 
           <section class="content-panel">
             <div class="panel-head">
-              <h3>系统建议推进</h3>
-              <span class="panel-tip">当前版本最适合先做完整演示链路</span>
+              <h3>游览推荐</h3>
+              <span class="panel-tip">围绕灵山胜境的游览体验提供快速指引</span>
             </div>
             <ol class="step-list">
-              <li>先用后端现有数据把游客首页、问答页和路线页做完整。</li>
-              <li>后台先承接看板、记录和知识条目维护。</li>
-              <li>等演示链路稳定后，再接入大模型、知识切片和语音能力。</li>
+              <li>先了解热门景点分布，再按兴趣选择适合自己的游览方向。</li>
+              <li>结合问答咨询获取景点亮点、开放时间和服务信息。</li>
+              <li>根据游玩时长与同行类型生成更贴合需求的参观路线。</li>
             </ol>
           </section>
         </div>
@@ -1219,7 +1232,7 @@ watch(digitalOverlayOpen, (isOpen) => {
           <div class="section-head">
             <div>
               <p class="section-kicker">智能问答</p>
-              <h2><ScrollFloatText text="中文提问、中文回答、中文反馈闭环" /></h2>
+              <h2><ScrollFloatText text="景点咨询、资料溯源、游客反馈" /></h2>
             </div>
           </div>
 
@@ -1261,7 +1274,7 @@ watch(digitalOverlayOpen, (isOpen) => {
           <section class="content-panel">
             <div class="panel-head">
               <h3>回答结果</h3>
-              <span class="panel-tip">来源和追问建议都保留中文</span>
+              <span class="panel-tip">展示命中资料来源和后续游览建议</span>
             </div>
 
             <div v-if="chatResponse" class="chat-result">
@@ -1331,7 +1344,7 @@ watch(digitalOverlayOpen, (isOpen) => {
 
             <div v-else class="empty-state">
               <h3>还没有回答结果</h3>
-              <p>输入一个和灵山胜境有关的问题，系统会优先依据本地景区资料生成中文回答。</p>
+              <p>输入一个和灵山胜境有关的问题，系统会优先依据本地景区资料生成导览建议。</p>
             </div>
           </section>
           </div>
@@ -1342,7 +1355,7 @@ watch(digitalOverlayOpen, (isOpen) => {
         <div class="section-head">
           <div>
             <p class="section-kicker">路线推荐</p>
-            <h2><ScrollFloatText text="按兴趣、时长和同行类型生成中文路线" /></h2>
+            <h2><ScrollFloatText text="按兴趣、时长和同行类型规划路线" /></h2>
           </div>
         </div>
 
@@ -1445,7 +1458,7 @@ watch(digitalOverlayOpen, (isOpen) => {
 
             <div v-else class="empty-state">
               <h3>还没有路线结果</h3>
-              <p>选好偏好后点击“生成路线”，系统会输出一条适合当前条件的中文游览方案。</p>
+              <p>选好偏好后点击“生成路线”，系统会输出一条适合当前条件的游览方案。</p>
             </div>
           </section>
         </div>
@@ -1455,7 +1468,7 @@ watch(digitalOverlayOpen, (isOpen) => {
         <div class="section-head">
           <div>
             <p class="section-kicker">后台看板</p>
-            <h2><ScrollFloatText text="用中文看清问答量、满意度和运营热点" /></h2>
+            <h2><ScrollFloatText text="看清咨询量、满意度和运营热点" /></h2>
           </div>
         </div>
 
@@ -1478,7 +1491,7 @@ watch(digitalOverlayOpen, (isOpen) => {
             <button type="button" class="primary-button" :disabled="adminLoading" @click="loginToAdmin">
               {{ adminLoading ? '正在登录...' : '登录后台' }}
             </button>
-            <span class="muted-text">演示账号：admin / admin123</span>
+            <span class="muted-text">账号和密码请使用当前后端环境配置</span>
           </div>
           <p v-if="adminMessage" class="notice-inline">{{ adminMessage }}</p>
         </section>
@@ -1599,7 +1612,7 @@ watch(digitalOverlayOpen, (isOpen) => {
         <div class="section-head">
           <div>
             <p class="section-kicker">知识库管理</p>
-            <h2><ScrollFloatText text="中文内容编辑与后台维护放在同一视图" /></h2>
+            <h2><ScrollFloatText text="景区知识维护与后台管理放在同一视图" /></h2>
           </div>
         </div>
 
@@ -1607,7 +1620,16 @@ watch(digitalOverlayOpen, (isOpen) => {
           <div class="empty-state">
             <h3>请先登录后台</h3>
             <p>知识库维护依赖后台演示会话。你可以先进入“后台看板”完成登录，再回来编辑内容。</p>
-            <button type="button" class="primary-button" @click="selectView('dashboard')">去后台看板登录</button>
+            <div class="action-row">
+              <button type="button" class="primary-button" @click="selectView('dashboard')">去后台看板登录</button>
+              <a
+                class="ghost-button knowledge-download-button"
+                href="/downloads/scenic-questionnaire-data-package.zip"
+                download="景区问卷数据资料包汇总.zip"
+              >
+                下载资料包
+              </a>
+            </div>
           </div>
         </section>
 
@@ -1616,7 +1638,7 @@ watch(digitalOverlayOpen, (isOpen) => {
             <section class="content-panel">
               <div class="panel-head">
                 <h3>{{ knowledgeForm.id == null ? '新增知识条目' : '编辑知识条目' }}</h3>
-                <span class="panel-tip">内容、来源、关键词都建议保持中文</span>
+                <span class="panel-tip">内容、来源、关键词需贴合景区导览业务</span>
               </div>
               <div class="form-grid">
                 <label class="field-label">
@@ -1631,7 +1653,7 @@ watch(digitalOverlayOpen, (isOpen) => {
                 </label>
                 <label class="field-label field-span-2">
                   <span>关键词</span>
-                  <input v-model="knowledgeForm.keywords" class="text-input" placeholder="多个关键词请用中文逗号分隔" />
+                  <input v-model="knowledgeForm.keywords" class="text-input" placeholder="多个关键词请用逗号分隔，例如：大佛，演艺，门票" />
                 </label>
                 <label class="field-label field-span-2">
                   <span>知识来源</span>
@@ -1643,7 +1665,7 @@ watch(digitalOverlayOpen, (isOpen) => {
                     v-model="knowledgeForm.content"
                     class="text-input textarea"
                     rows="8"
-                    placeholder="请直接填写完整的中文知识内容"
+                    placeholder="请填写完整的景区知识内容，例如开放时间、讲解词或服务说明"
                   />
                 </label>
               </div>
@@ -1662,8 +1684,17 @@ watch(digitalOverlayOpen, (isOpen) => {
 
             <section class="content-panel">
               <div class="panel-head">
-                <h3>现有知识条目</h3>
-                <span class="panel-tip">点击即可编辑或删除</span>
+                <div class="panel-head-copy">
+                  <h3>现有知识条目</h3>
+                  <span class="panel-tip">点击即可编辑或删除</span>
+                </div>
+                <a
+                  class="ghost-button knowledge-download-button"
+                  href="/downloads/scenic-questionnaire-data-package.zip"
+                  download="景区问卷数据资料包汇总.zip"
+                >
+                  景区问卷数据资料包汇总
+                </a>
               </div>
               <div class="knowledge-list">
                 <article v-for="entry in knowledgeList" :key="entry.id" class="knowledge-card">
@@ -1710,1372 +1741,4 @@ watch(digitalOverlayOpen, (isOpen) => {
   </div>
 </template>
 
-<style scoped>
-.app-shell {
-  min-height: 100vh;
-}
-
-.hero-band {
-  background-position: center;
-  background-size: cover;
-  color: #f5f5f0;
-}
-
-.hero-content,
-.page-body {
-  width: min(1180px, calc(100vw - 32px));
-  margin: 0 auto;
-}
-
-.hero-content {
-  padding: 28px 0 20px;
-}
-
-.hero-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  align-items: end;
-}
-
-.eyebrow,
-.section-kicker {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: rgba(245, 245, 240, 0.82);
-}
-
-h1,
-h2,
-h3,
-h4,
-p {
-  margin: 0;
-}
-
-h1 {
-  font-size: 40px;
-  line-height: 1.2;
-}
-
-h2 {
-  font-size: 28px;
-  color: #18261d;
-}
-
-h3 {
-  font-size: 20px;
-  color: #18261d;
-}
-
-h4 {
-  font-size: 16px;
-  color: #18261d;
-}
-
-.hero-copy {
-  margin-top: 14px;
-  max-width: 720px;
-  font-size: 16px;
-  line-height: 1.7;
-  color: rgba(245, 245, 240, 0.9);
-}
-
-.digital-stage {
-  --cookie-panel: rgba(255, 248, 242, 0.96);
-  --cookie-line: #e1d2c3;
-  --cookie-text: #5d4030;
-  --cookie-soft: #8d6d5d;
-  position: fixed;
-  right: 12px;
-  bottom: 12px;
-  z-index: 40;
-  width: min(430px, calc(100vw - 24px));
-  height: 560px;
-  pointer-events: none;
-  overflow: visible;
-}
-
-.digital-stage.expanded {
-  inset: 0;
-  z-index: 90;
-  width: auto;
-  height: auto;
-}
-
-.digital-overlay-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(22, 27, 22, 0.4);
-  backdrop-filter: blur(8px);
-  pointer-events: auto;
-}
-
-.digital-shell {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.digital-shell.expanded {
-  width: min(1240px, calc(100vw - 40px));
-  height: min(88vh, 860px);
-  margin: 20px auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 420px);
-  gap: 20px;
-  align-items: stretch;
-  pointer-events: auto;
-}
-
-.digital-shell.expanded.caramel {
-  --cookie-panel: rgba(255, 248, 242, 0.97);
-  --cookie-line: #e1d2c3;
-  --cookie-text: #5d4030;
-  --cookie-soft: #8d6d5d;
-}
-
-.digital-shell.expanded.mint {
-  --cookie-panel: rgba(242, 251, 248, 0.97);
-  --cookie-line: #cfe0d9;
-  --cookie-text: #3b544a;
-  --cookie-soft: #6a8177;
-}
-
-.digital-shell.expanded.berry {
-  --cookie-panel: rgba(255, 244, 248, 0.97);
-  --cookie-line: #e9d1db;
-  --cookie-text: #6a4050;
-  --cookie-soft: #966b7d;
-}
-
-.digital-shell.expanded.cocoa {
-  --cookie-panel: rgba(248, 242, 238, 0.97);
-  --cookie-line: #dccabf;
-  --cookie-text: #503a30;
-  --cookie-soft: #7d695f;
-}
-
-.digital-stage-host {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  filter: drop-shadow(0 26px 42px rgba(33, 28, 23, 0.2));
-  pointer-events: auto;
-}
-
-.digital-stage-host[role='button'] {
-  cursor: pointer;
-}
-
-.digital-human-hint {
-  position: absolute;
-  right: 18px;
-  bottom: 174px;
-  display: inline-flex;
-  align-items: center;
-  min-height: 38px;
-  padding: 0 16px;
-  border: 1px solid rgba(255, 255, 255, 0.66);
-  border-radius: 999px;
-  background: rgba(255, 248, 242, 0.94);
-  color: var(--cookie-text);
-  font-size: 14px;
-  box-shadow: 0 12px 30px rgba(33, 28, 23, 0.12);
-  backdrop-filter: blur(8px);
-}
-
-.digital-shell.expanded .digital-stage-host {
-  min-width: 0;
-  min-height: 0;
-  border-radius: 30px;
-  background:
-    radial-gradient(circle at 50% 22%, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0) 42%),
-    radial-gradient(circle at 50% 84%, rgba(236, 192, 146, 0.18), rgba(236, 192, 146, 0) 32%);
-  overflow: hidden;
-  cursor: default;
-}
-
-.digital-overlay-close {
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  z-index: 2;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--cookie-line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  color: var(--cookie-text);
-  font-size: 28px;
-  line-height: 1;
-  cursor: pointer;
-  box-shadow: 0 12px 24px rgba(19, 29, 23, 0.12);
-}
-
-.digital-console {
-  position: relative;
-  width: 100%;
-  max-height: none;
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid var(--cookie-line);
-  border-radius: 18px;
-  background: var(--cookie-panel);
-  color: var(--cookie-text);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 24px 60px rgba(19, 29, 23, 0.2);
-  overflow: auto;
-  pointer-events: auto;
-}
-
-.digital-stage.caramel {
-  --cookie-panel: rgba(255, 248, 242, 0.96);
-  --cookie-line: #e1d2c3;
-  --cookie-text: #5d4030;
-  --cookie-soft: #8d6d5d;
-}
-
-.digital-stage.mint {
-  --cookie-panel: rgba(242, 251, 248, 0.96);
-  --cookie-line: #cfe0d9;
-  --cookie-text: #3b544a;
-  --cookie-soft: #6a8177;
-}
-
-.digital-stage.berry {
-  --cookie-panel: rgba(255, 244, 248, 0.96);
-  --cookie-line: #e9d1db;
-  --cookie-text: #6a4050;
-  --cookie-soft: #966b7d;
-}
-
-.digital-stage.cocoa {
-  --cookie-panel: rgba(248, 242, 238, 0.96);
-  --cookie-line: #dccabf;
-  --cookie-text: #503a30;
-  --cookie-soft: #7d695f;
-}
-
-.digital-stage.speaking .digital-human-hint,
-.digital-shell.expanded.speaking .digital-console {
-  border-color: rgba(212, 177, 98, 0.45);
-  box-shadow: 0 0 0 1px rgba(212, 177, 98, 0.14) inset;
-}
-
-.digital-status-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-}
-
-.muted-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--cookie-line);
-  background: #f7f8f4;
-  color: var(--cookie-soft);
-  font-size: 13px;
-}
-
-.auto-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--cookie-line);
-  background: #f7f8f4;
-  color: var(--cookie-soft);
-  font-size: 13px;
-  border-radius: 999px;
-}
-
-
-.digital-speech {
-  display: grid;
-  gap: 8px;
-}
-
-.digital-label {
-  font-size: 14px;
-  color: var(--cookie-soft);
-}
-
-.digital-line {
-  min-height: 84px;
-  color: var(--cookie-text);
-  font-size: 16px;
-  line-height: 1.75;
-}
-
-.digital-note {
-  color: var(--cookie-soft);
-  font-size: 13px;
-}
-
-.voice-strip {
-  display: grid;
-  gap: 8px;
-}
-
-.voice-select {
-  min-height: 40px;
-  font-size: 13px;
-  color: var(--cookie-text);
-  border-color: var(--cookie-line);
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.voice-note {
-  margin: 0;
-  color: var(--cookie-soft);
-  font-size: 13px;
-}
-
-.status-mini {
-  display: grid;
-  gap: 8px;
-}
-
-.status-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  font-size: 14px;
-}
-
-.status-line span,
-.status-line strong {
-  color: var(--cookie-soft);
-}
-
-.skin-strip {
-  display: grid;
-  gap: 8px;
-}
-
-.skin-title {
-  font-size: 13px;
-  color: var(--cookie-soft);
-}
-
-.nav-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.nav-button,
-.primary-button,
-.ghost-button,
-.chip-button {
-  min-height: 40px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: 0.2s ease;
-}
-
-.nav-button {
-  padding: 0 16px;
-  color: #f5f5f0;
-  background: rgba(245, 245, 240, 0.08);
-  border-color: rgba(245, 245, 240, 0.14);
-}
-
-.nav-button.active,
-.nav-button:hover {
-  background: rgba(212, 177, 98, 0.18);
-  border-color: rgba(212, 177, 98, 0.45);
-}
-
-.page-body {
-  padding: 24px 0 420px;
-}
-
-.page-section,
-.page-subsection {
-  display: grid;
-  gap: 20px;
-}
-
-.page-subsection {
-  margin-top: 8px;
-}
-
-.section-head {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.section-head.compact {
-  align-items: center;
-}
-
-.stats-grid,
-.dual-grid,
-.triple-grid,
-.attraction-grid {
-  display: grid;
-  gap: 16px;
-}
-
-.stats-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.dual-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.triple-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.attraction-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.content-panel,
-.stat-card,
-.attraction-card,
-.source-card,
-.record-card,
-.knowledge-card {
-  border: 1px solid #d7ddd2;
-  background: #ffffff;
-}
-
-.content-panel,
-.stat-card {
-  padding: 18px;
-}
-
-.attraction-card,
-.record-card,
-.knowledge-card,
-.source-card {
-  padding: 16px;
-}
-
-.panel-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.panel-tip,
-.muted-text {
-  color: #5d6b61;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.body-text,
-.answer-text {
-  color: #223228;
-  line-height: 1.7;
-}
-
-.answer-text {
-  font-size: 16px;
-}
-
-.stat-label {
-  display: block;
-  margin-bottom: 10px;
-  color: #5d6b61;
-  font-size: 14px;
-}
-
-.stat-value {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 28px;
-  color: #18261d;
-}
-
-.chip-row,
-.tag-row,
-.action-row,
-.scope-list,
-.source-list,
-.record-list,
-.knowledge-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.action-row.compact {
-  justify-content: center;
-}
-
-.compact-gap {
-  gap: 8px;
-}
-
-.chip-button,
-.scope-chip,
-.tag-chip,
-.score-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 32px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-
-.chip-button,
-.scope-chip,
-.tag-chip {
-  border: 1px solid #d7ddd2;
-  background: #f5f7f3;
-  color: #223228;
-}
-
-.chip-button.active,
-.ghost-button.active {
-  border-color: #8aa070;
-  background: #ebf2e2;
-}
-
-.score-badge {
-  border: 1px solid #d8c086;
-  background: #faf3df;
-  color: #6f5824;
-}
-
-.step-list,
-.plain-list {
-  margin: 0;
-  padding-left: 20px;
-  color: #223228;
-  line-height: 1.8;
-}
-
-.field-group,
-.feedback-block,
-.tips-block,
-.follow-up {
-  display: grid;
-  gap: 12px;
-}
-
-.field-title,
-.field-label span {
-  font-size: 14px;
-  color: #415347;
-}
-
-.field-label {
-  display: grid;
-  gap: 8px;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.field-span-2 {
-  grid-column: span 2;
-}
-
-.text-input {
-  width: 100%;
-  min-height: 42px;
-  padding: 10px 12px;
-  border: 1px solid #cfd7ca;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #18261d;
-}
-
-.textarea {
-  resize: vertical;
-  min-height: 120px;
-}
-
-.small-textarea {
-  min-height: 88px;
-}
-
-.primary-button {
-  padding: 0 16px;
-  background: #375641;
-  color: #ffffff;
-}
-
-.primary-button:hover {
-  background: #2f4937;
-}
-
-.primary-button:disabled {
-  cursor: wait;
-  opacity: 0.72;
-}
-
-.ghost-button {
-  padding: 0 16px;
-  border-color: #cfd7ca;
-  background: #ffffff;
-  color: #223228;
-}
-
-.ghost-button:hover {
-  border-color: #8aa070;
-  background: #f3f7ee;
-}
-
-.ghost-button.danger:hover {
-  border-color: #c27b7b;
-  background: #f9ecec;
-}
-
-.notice,
-.notice-inline {
-  padding: 14px 16px;
-  border: 1px solid #d7ddd2;
-  background: #fff8eb;
-  color: #7a5d1e;
-}
-
-.notice-error {
-  border-color: #d7b9b9;
-  background: #fff1f1;
-  color: #8a4141;
-}
-
-.result-head,
-.attraction-top,
-.route-head,
-.record-head {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.chat-result,
-.route-result {
-  display: grid;
-  gap: 16px;
-}
-
-.route-result :deep(.scenic-map-panel) {
-  margin-top: 2px;
-}
-
-.source-list,
-.record-list,
-.knowledge-list {
-  display: grid;
-}
-
-.route-list {
-  display: grid;
-  gap: 14px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.route-item {
-  display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 12px;
-}
-
-.route-order {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: #ebf2e2;
-  color: #375641;
-  font-weight: 700;
-}
-
-.route-body {
-  display: grid;
-  gap: 8px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid #ebefea;
-}
-
-.trend-list,
-.ranking-list {
-  display: grid;
-  gap: 10px;
-}
-
-.trend-row,
-.ranking-list li {
-  display: grid;
-  grid-template-columns: minmax(72px, 84px) minmax(0, 1fr) 36px;
-  align-items: center;
-  gap: 10px;
-  list-style: none;
-}
-
-.trend-bar {
-  width: 100%;
-  height: 10px;
-  background: #edf1ea;
-}
-
-.trend-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #67834a, #bda25e);
-}
-
-.ranking-list {
-  padding: 0;
-  margin: 0;
-}
-
-.ranking-list li {
-  grid-template-columns: minmax(0, 1fr) 48px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #ebefea;
-}
-
-.ranking-list.secondary {
-  margin-top: 14px;
-}
-
-.record-list,
-.knowledge-list {
-  gap: 12px;
-}
-
-.check-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: #415347;
-}
-
-.empty-state {
-  display: grid;
-  gap: 12px;
-  place-items: start;
-  min-height: 240px;
-  align-content: center;
-  color: #415347;
-}
-
-/* Desktop visual refresh inspired by the requested React Bits effects. */
-:global(body) {
-  background:
-    linear-gradient(135deg, rgba(13, 30, 24, 0.96) 0%, rgba(18, 42, 33, 0.94) 34%, rgba(48, 55, 42, 0.92) 100%),
-    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 80px);
-}
-
-.app-shell {
-  --surface: rgba(247, 251, 241, 0.9);
-  --surface-strong: rgba(255, 255, 255, 0.96);
-  --surface-dark: rgba(15, 33, 27, 0.82);
-  --line: rgba(220, 232, 210, 0.52);
-  --line-strong: rgba(230, 186, 98, 0.56);
-  --ink: #13251f;
-  --muted: #667568;
-  --gold: #d9ad58;
-  --gold-strong: #e8c370;
-  --coral: #cf765c;
-  --mint: #88b99b;
-  position: relative;
-  isolation: isolate;
-  overflow-x: hidden;
-  min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.026) 0 1px, transparent 1px 88px);
-}
-
-.page-strands {
-  pointer-events: none;
-}
-
-.page-strands-fixed {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  opacity: 0.52;
-  mix-blend-mode: screen;
-}
-
-.hero-strands {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  opacity: 0.68;
-  mix-blend-mode: screen;
-}
-
-.page-strands-bottom {
-  position: relative;
-  z-index: 0;
-  height: 260px;
-  margin: 34px 0 0;
-  opacity: 0.78;
-  mix-blend-mode: screen;
-}
-
-.hero-band {
-  position: relative;
-  z-index: 1;
-  min-height: 560px;
-  background-position: center;
-  background-size: cover;
-  border-bottom: 1px solid rgba(231, 193, 112, 0.2);
-  box-shadow: 0 28px 80px rgba(5, 15, 12, 0.28);
-}
-
-.hero-content {
-  position: relative;
-  z-index: 1;
-  padding: 34px 0 28px;
-}
-
-.hero-main {
-  grid-template-columns: minmax(0, 1fr);
-  gap: 22px;
-  min-height: 0;
-  align-items: start;
-}
-
-.eyebrow {
-  color: rgba(232, 195, 112, 0.88);
-  font-weight: 700;
-}
-
-.section-kicker {
-  color: var(--gold);
-  font-weight: 800;
-}
-
-h1 {
-  max-width: 860px;
-  font-size: clamp(46px, 5.8vw, 86px);
-  line-height: 1.02;
-}
-
-.hero-title-block {
-  width: 100%;
-  max-width: 1120px;
-  min-height: 148px;
-  margin-bottom: 8px;
-}
-
-.hero-title-shine {
-  letter-spacing: 0;
-}
-
-h2 {
-  color: #f6f8ef;
-  font-size: 32px;
-}
-
-h3,
-h4 {
-  color: var(--ink);
-}
-
-.hero-copy {
-  max-width: 760px;
-  color: rgba(248, 252, 242, 0.86);
-  font-size: 20px;
-  line-height: 1.75;
-}
-
-.hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 24px;
-}
-
-.hero-button {
-  min-width: 152px;
-  min-height: 56px;
-  padding: 0 26px;
-  font-size: 20px;
-  font-weight: 700;
-  box-shadow: 0 20px 40px rgba(74, 16, 122, 0.28);
-}
-
-.hero-actions .primary-button {
-  border-color: rgba(205, 145, 255, 0.82);
-  background: linear-gradient(135deg, #7c3aed, #a855f7);
-  color: #ffffff;
-}
-
-.hero-actions .primary-button:hover {
-  border-color: rgba(243, 232, 255, 0.95);
-  background: linear-gradient(135deg, #6d28d9, #9333ea);
-}
-
-.hero-actions .ghost-button {
-  border-color: rgba(221, 189, 255, 0.76);
-  background: rgba(124, 58, 237, 0.28);
-  color: #fbf7ff;
-}
-
-.hero-actions .ghost-button:hover {
-  border-color: rgba(243, 232, 255, 0.92);
-  background: rgba(147, 51, 234, 0.42);
-  color: #ffffff;
-}
-
-.hero-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  width: 100%;
-  max-width: 1120px;
-}
-
-.hero-metric {
-  display: grid;
-  gap: 8px;
-  min-height: 124px;
-  padding: 18px;
-  border: 1px solid rgba(232, 195, 112, 0.32);
-  border-radius: 8px;
-  background: rgba(12, 31, 25, 0.68);
-  color: #f8fcf2;
-  box-shadow: 0 22px 50px rgba(5, 16, 13, 0.24);
-  backdrop-filter: blur(12px);
-}
-
-.hero-metric span {
-  color: rgba(232, 195, 112, 0.88);
-  font-size: 18px;
-  font-weight: 800;
-}
-
-.hero-metric strong {
-  color: #ffffff;
-  font-size: 36px;
-  line-height: 1.1;
-}
-
-.hero-metric p {
-  color: rgba(248, 252, 242, 0.72);
-  font-size: 16px;
-  line-height: 1.75;
-}
-
-.nav-strip {
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.nav-button,
-.primary-button,
-.ghost-button,
-.chip-button {
-  border-radius: 8px;
-}
-
-.nav-button {
-  min-height: 50px;
-  padding: 0 24px;
-  font-size: 19px;
-  font-weight: 700;
-  background: rgba(248, 252, 242, 0.1);
-  border-color: rgba(248, 252, 242, 0.2);
-  color: rgba(248, 252, 242, 0.9);
-  backdrop-filter: blur(10px);
-}
-
-.nav-button.active,
-.nav-button:hover {
-  background: rgba(232, 195, 112, 0.2);
-  border-color: rgba(232, 195, 112, 0.62);
-  color: #ffffff;
-}
-
-.page-body {
-  position: relative;
-  z-index: 1;
-  padding: 34px 0 380px;
-}
-
-.page-section,
-.page-subsection {
-  gap: 18px;
-}
-
-.section-head {
-  padding: 18px 0 4px;
-}
-
-.stats-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
-.dual-grid {
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-}
-
-.triple-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.attraction-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.content-panel,
-.stat-card,
-.attraction-card,
-.source-card,
-.record-card,
-.knowledge-card,
-.scenic-map-panel {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 247, 237, 0.92)),
-    var(--surface);
-  box-shadow:
-    0 20px 54px rgba(3, 17, 12, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.78);
-}
-
-.content-panel::before,
-.stat-card::before,
-.attraction-card::before,
-.source-card::before,
-.record-card::before,
-.knowledge-card::before,
-.hero-metric::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  background: linear-gradient(115deg, transparent 0%, transparent 42%, rgba(255, 255, 255, 0.46) 50%, transparent 58%, transparent 100%);
-  transform: translateX(-120%);
-  transition: transform 0.78s ease;
-  pointer-events: none;
-}
-
-.content-panel:hover::before,
-.stat-card:hover::before,
-.attraction-card:hover::before,
-.source-card:hover::before,
-.record-card:hover::before,
-.knowledge-card:hover::before,
-.hero-metric:hover::before {
-  transform: translateX(120%);
-}
-
-.content-panel > *,
-.stat-card > *,
-.attraction-card > *,
-.source-card > *,
-.record-card > *,
-.knowledge-card > *,
-.hero-metric > * {
-  position: relative;
-  z-index: 1;
-}
-
-.stat-card {
-  min-height: 150px;
-}
-
-.stat-label,
-.panel-tip,
-.muted-text {
-  color: var(--muted);
-}
-
-.stat-label {
-  font-size: 16px;
-}
-
-.stat-value {
-  color: var(--ink);
-  font-size: 38px;
-}
-
-.body-text,
-.answer-text {
-  color: #20342b;
-}
-
-.score-badge {
-  border-color: rgba(232, 195, 112, 0.56);
-  border-radius: 8px;
-  background: rgba(255, 246, 222, 0.86);
-  color: #73551b;
-  font-weight: 800;
-}
-
-.chip-button,
-.scope-chip,
-.tag-chip {
-  border-color: rgba(25, 58, 47, 0.14);
-  border-radius: 8px;
-  background: rgba(244, 248, 239, 0.9);
-  color: #20342b;
-}
-
-.chip-button:hover,
-.chip-button.active,
-.ghost-button.active {
-  border-color: rgba(136, 185, 155, 0.86);
-  background: rgba(219, 238, 222, 0.86);
-}
-
-.primary-button {
-  background: linear-gradient(135deg, #214f3d, #357253);
-  box-shadow: 0 14px 28px rgba(17, 62, 43, 0.18);
-}
-
-.primary-button:hover {
-  background: linear-gradient(135deg, #1c4435, #2f674b);
-}
-
-.ghost-button {
-  border-color: rgba(31, 63, 50, 0.18);
-  background: rgba(255, 255, 255, 0.78);
-}
-
-.ghost-button:hover {
-  border-color: rgba(232, 195, 112, 0.66);
-  background: rgba(255, 250, 237, 0.92);
-}
-
-.text-input {
-  border-color: rgba(31, 63, 50, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
-}
-
-.text-input:focus {
-  outline: 2px solid rgba(232, 195, 112, 0.38);
-  border-color: rgba(232, 195, 112, 0.72);
-}
-
-.notice,
-.notice-inline {
-  border-color: rgba(232, 195, 112, 0.44);
-  border-radius: 8px;
-  background: rgba(255, 248, 229, 0.92);
-}
-
-.route-order {
-  border-radius: 8px;
-  background: linear-gradient(135deg, rgba(232, 195, 112, 0.24), rgba(136, 185, 155, 0.24));
-  color: #254a39;
-}
-
-.trend-bar {
-  overflow: hidden;
-  border-radius: 8px;
-  background: rgba(22, 54, 42, 0.08);
-}
-
-.trend-fill {
-  background: linear-gradient(90deg, var(--mint), var(--gold), var(--coral));
-  box-shadow: 0 0 18px rgba(232, 195, 112, 0.38);
-}
-
-.inquiry-section {
-  position: relative;
-}
-
-.inquiry-cursor-field {
-  display: grid;
-  gap: 18px;
-}
-
-.digital-stage {
-  --cookie-panel: rgba(247, 251, 242, 0.94);
-  --cookie-line: rgba(232, 195, 112, 0.34);
-  --cookie-text: #1a2d25;
-  --cookie-soft: #657569;
-}
-
-.digital-overlay-backdrop {
-  background: rgba(8, 18, 15, 0.62);
-  backdrop-filter: blur(12px);
-}
-
-.digital-shell.expanded {
-  gap: 16px;
-}
-
-.digital-shell.expanded .digital-stage-host {
-  border: 1px solid rgba(232, 195, 112, 0.22);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.08)),
-    linear-gradient(135deg, rgba(48, 91, 67, 0.26), rgba(232, 195, 112, 0.12));
-}
-
-.digital-console {
-  border-color: var(--cookie-line);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 248, 236, 0.9)),
-    var(--cookie-panel);
-}
-
-.digital-human-hint {
-  min-height: 42px;
-  border-radius: 8px;
-  border-color: rgba(232, 195, 112, 0.5);
-  background: rgba(247, 251, 242, 0.92);
-  font-weight: 800;
-}
-
-.digital-overlay-close {
-  border-radius: 8px;
-}
-
-.digital-status-row {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
-}
-
-.hearing-status {
-  align-self: center;
-  color: var(--cookie-soft);
-  font-size: 13px;
-}
-
-.hearing-button {
-  border-color: rgba(207, 118, 92, 0.34);
-  color: #7c3c2d;
-}
-
-.voice-strip,
-.status-mini,
-.digital-speech {
-  padding: 12px;
-  border: 1px solid rgba(31, 63, 50, 0.1);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
-}
-
-.route-result :deep(.scenic-map-panel) {
-  border-radius: 8px;
-}
-
-@media (max-width: 1024px) {
-  .hero-main,
-  .stats-grid,
-  .dual-grid,
-  .triple-grid,
-  .attraction-grid,
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .field-span-2 {
-    grid-column: span 1;
-  }
-
-  .hero-metrics {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .digital-stage {
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    width: auto;
-    height: 500px;
-  }
-
-  .digital-stage.expanded {
-    left: 0;
-    right: 0;
-    bottom: 0;
-  }
-
-  .digital-human-hint {
-    right: 12px;
-    bottom: 152px;
-    font-size: 13px;
-  }
-
-  .digital-shell.expanded {
-    width: min(100vw - 24px, 720px);
-    height: min(92vh, 980px);
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(300px, 46vh) minmax(0, 1fr);
-    gap: 12px;
-    margin: 12px auto;
-  }
-
-  .digital-shell.expanded .digital-stage-host {
-    min-height: 300px;
-  }
-
-  .digital-console {
-    max-height: none;
-  }
-
-  .hero-content,
-  .page-body {
-    width: min(100vw - 24px, 1180px);
-  }
-
-  .hero-content {
-    padding-top: 18px;
-  }
-
-  .page-body {
-    padding-bottom: 500px;
-  }
-
-  h1 {
-    font-size: 30px;
-  }
-
-  h2 {
-    font-size: 24px;
-  }
-
-  .section-head,
-  .panel-head,
-  .result-head,
-  .attraction-top,
-  .record-head {
-    grid-template-columns: 1fr;
-    display: grid;
-  }
-
-  .action-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .trend-row {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="./app-view.css"></style>

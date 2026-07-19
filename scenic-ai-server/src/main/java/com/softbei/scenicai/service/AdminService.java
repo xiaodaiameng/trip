@@ -12,15 +12,19 @@ import com.softbei.scenicai.repository.AttractionRepository;
 import com.softbei.scenicai.repository.ConversationRecordRepository;
 import com.softbei.scenicai.repository.FeedbackRecordRepository;
 import com.softbei.scenicai.repository.KnowledgeEntryRepository;
+import com.softbei.scenicai.security.JwtService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,8 +39,8 @@ public class AdminService {
     @Value("${app.admin.username}")
     private String adminUsername;
 
-    @Value("${app.admin.password}")
-    private String adminPassword;
+    @Value("${app.admin.password-hash}")
+    private String adminPasswordHash;
 
     @Value("${app.admin.display-name}")
     private String adminDisplayName;
@@ -45,30 +49,44 @@ public class AdminService {
     private final KnowledgeEntryRepository knowledgeEntryRepository;
     private final ConversationRecordRepository conversationRecordRepository;
     private final FeedbackRecordRepository feedbackRecordRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
 
+    @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest request) {
-        if (!adminUsername.equals(request.username()) || !adminPassword.equals(request.password())) {
-            log.warn("后台登录失败，账号：{}", request.username());
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "账号或密码错误");
+        if (adminPasswordHash == null || adminPasswordHash.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Admin password hash is not configured");
         }
-        log.info("后台登录成功，账号：{}", request.username());
-        return new LoginResponse("demo-admin-token", adminDisplayName, List.of("ADMIN"));
+        if (!adminUsername.equals(request.username()) || !passwordEncoder.matches(request.password(), adminPasswordHash)) {
+            log.warn("Admin login failed for username={}", request.username());
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid username or password");
+        }
+        log.info("Admin login succeeded for username={}", request.username());
+        return new LoginResponse(jwtService.issueAdminToken(request.username(), List.of("ADMIN")), adminDisplayName, List.of("ADMIN"));
     }
 
+    @Transactional(readOnly = true)
     public List<Attraction> listAttractions() {
-        return attractionRepository.findAll().stream()
-                .sorted(Comparator.comparingInt(Attraction::getPopularityScore).reversed())
-                .toList();
+        return attractionRepository.findAllByOrderByPopularityScoreDesc();
     }
 
+    @Transactional(readOnly = true)
+    public Page<Attraction> listAttractions(Pageable pageable) {
+        return attractionRepository.findAllByOrderByPopularityScoreDesc(pageable);
+    }
+
+    @Transactional(readOnly = true)
     public List<KnowledgeEntry> listKnowledge() {
-        return knowledgeEntryRepository.findAll().stream()
-                .sorted(Comparator.comparing(KnowledgeEntry::getUpdatedAt).reversed())
-                .toList();
+        return knowledgeEntryRepository.findAllByOrderByUpdatedAtDesc();
     }
 
+    @Transactional(readOnly = true)
+    public Page<KnowledgeEntry> listKnowledge(Pageable pageable) {
+        return knowledgeEntryRepository.findAllByOrderByUpdatedAtDesc(pageable);
+    }
+
+    @Transactional
     public KnowledgeEntry createKnowledge(KnowledgeRequest request) {
-        LocalDateTime now = LocalDateTime.now();
         KnowledgeEntry entry = KnowledgeEntry.builder()
                 .title(request.title())
                 .category(request.category())
@@ -76,42 +94,46 @@ public class AdminService {
                 .content(request.content())
                 .source(request.source())
                 .published(request.published() == null || request.published())
-                .createdAt(now)
-                .updatedAt(now)
                 .build();
         KnowledgeEntry saved = knowledgeEntryRepository.save(entry);
-        log.info("已新增知识条目：{}（分类：{}）", saved.getTitle(), saved.getCategory());
+        log.info("Knowledge entry created, id={}, title={}", saved.getId(), saved.getTitle());
         return saved;
     }
 
+    @Transactional
     public KnowledgeEntry updateKnowledge(Long id, KnowledgeRequest request) {
         KnowledgeEntry entry = knowledgeEntryRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "知识条目不存在"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Knowledge entry not found"));
         entry.setTitle(request.title());
         entry.setCategory(request.category());
         entry.setKeywords(request.keywords() == null ? List.of() : request.keywords());
         entry.setContent(request.content());
         entry.setSource(request.source());
         entry.setPublished(request.published() == null || request.published());
-        entry.setUpdatedAt(LocalDateTime.now());
         KnowledgeEntry saved = knowledgeEntryRepository.save(entry);
-        log.info("已更新知识条目：{}（ID：{}）", saved.getTitle(), saved.getId());
+        log.info("Knowledge entry updated, id={}, title={}", saved.getId(), saved.getTitle());
         return saved;
     }
 
+    @Transactional
     public void deleteKnowledge(Long id) {
         KnowledgeEntry entry = knowledgeEntryRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "知识条目不存在"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Knowledge entry not found"));
         knowledgeEntryRepository.delete(entry);
-        log.info("已删除知识条目：{}（ID：{}）", entry.getTitle(), entry.getId());
+        log.info("Knowledge entry deleted, id={}, title={}", entry.getId(), entry.getTitle());
     }
 
+    @Transactional(readOnly = true)
     public List<ConversationRecord> listRecords() {
-        return conversationRecordRepository.findAll().stream()
-                .sorted(Comparator.comparing(ConversationRecord::getCreatedAt).reversed())
-                .toList();
+        return conversationRecordRepository.findAllByOrderByCreatedAtDesc();
     }
 
+    @Transactional(readOnly = true)
+    public Page<ConversationRecord> listRecords(Pageable pageable) {
+        return conversationRecordRepository.findAllByOrderByCreatedAtDesc(pageable);
+    }
+
+    @Transactional(readOnly = true)
     public DashboardResponse getDashboard() {
         List<ConversationRecord> records = conversationRecordRepository.findAll();
         List<FeedbackRecord> feedbacks = feedbackRecordRepository.findAll();
@@ -125,20 +147,15 @@ public class AdminService {
         double satisfactionRate = feedbacks.isEmpty() ? 0D :
                 feedbacks.stream().filter(FeedbackRecord::getHelpful).count() * 100.0 / feedbackCount;
 
-        List<DashboardResponse.MetricPoint> weeklyTrend = buildWeeklyTrend(records);
-        List<DashboardResponse.NameValue> emotionDistribution = buildEmotionDistribution(records);
-        List<DashboardResponse.NameValue> topAttractions = buildTopAttractions(records);
-        List<DashboardResponse.NameValue> hotQuestions = buildHotQuestions(records);
-
         return new DashboardResponse(
                 conversationCount,
                 feedbackCount,
                 avgResponseMillis,
                 Math.round(satisfactionRate * 10.0) / 10.0,
-                weeklyTrend,
-                emotionDistribution,
-                topAttractions,
-                hotQuestions
+                buildWeeklyTrend(records),
+                buildEmotionDistribution(records),
+                buildTopAttractions(records),
+                buildHotQuestions(records)
         );
     }
 
@@ -178,9 +195,7 @@ public class AdminService {
         if (!ranked.isEmpty()) {
             return ranked;
         }
-        return attractionRepository.findAll().stream()
-                .sorted(Comparator.comparingInt(Attraction::getPopularityScore).reversed())
-                .limit(5)
+        return attractionRepository.findTop5ByOrderByPopularityScoreDesc().stream()
                 .map(item -> new DashboardResponse.NameValue(item.getName(), item.getPopularityScore().longValue()))
                 .toList();
     }

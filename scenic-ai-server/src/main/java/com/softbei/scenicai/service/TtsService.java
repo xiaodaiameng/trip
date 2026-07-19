@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.softbei.scenicai.dto.TtsVoiceResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -13,20 +14,28 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class TtsService {
 
-    private static final String POWERSHELL = "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-
     private final ObjectMapper objectMapper;
 
+    @Value("${app.tts.provider:disabled}")
+    private String provider;
+
+    @Value("${app.tts.powershell-path:}")
+    private String configuredPowerShellPath;
+
     public List<TtsVoiceResponse> listVoices() {
-        ensureWindows();
+        if (!isWindowsProvider()) {
+            return List.of();
+        }
 
         String script = """
                 Add-Type -AssemblyName System.Speech
@@ -48,22 +57,24 @@ public class TtsService {
         try {
             return objectMapper.readValue(output, new TypeReference<>() {});
         } catch (IOException exception) {
-            log.error("解析 TTS 音色列表失败，原始输出：{}", output, exception);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "语音音色解析失败");
+            log.error("Failed to parse TTS voice list: {}", output, exception);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to parse TTS voice list");
         }
     }
 
     public byte[] synthesize(String text, String voiceName) {
-        ensureWindows();
         if (text == null || text.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "朗读内容不能为空");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "TTS text must not be blank");
+        }
+        if (!isWindowsProvider()) {
+            throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "Server TTS provider is not enabled");
         }
 
         Path outputPath;
         try {
             outputPath = Files.createTempFile("scenic-mobile-tts-", ".wav");
         } catch (IOException exception) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "创建语音文件失败");
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to create temporary audio file");
         }
 
         try {
@@ -87,27 +98,33 @@ public class TtsService {
             ));
             return Files.readAllBytes(outputPath);
         } catch (IOException exception) {
-            log.error("读取 TTS 音频失败", exception);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "读取语音文件失败");
+            log.error("Failed to read TTS audio", exception);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to read TTS audio");
         } finally {
             try {
                 Files.deleteIfExists(outputPath);
             } catch (IOException exception) {
-                log.warn("删除临时 TTS 音频失败：{}", outputPath, exception);
+                log.warn("Failed to delete temporary TTS audio: {}", outputPath, exception);
             }
         }
     }
 
-    private void ensureWindows() {
-        String osName = System.getProperty("os.name", "");
-        if (!osName.toLowerCase().contains("windows")) {
-            throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "当前服务端仅支持 Windows 语音");
+    private boolean isWindowsProvider() {
+        if (!"windows".equalsIgnoreCase(provider)) {
+            return false;
         }
+        if (!System.getProperty("os.name", "").toLowerCase().contains("windows")) {
+            throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "Windows TTS provider requires a Windows host");
+        }
+        return true;
     }
 
     private String runPowerShell(String script, Map<String, String> environment) {
+        String powerShell = resolvePowerShell()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "PowerShell executable was not found"));
+
         ProcessBuilder builder = new ProcessBuilder(
-                POWERSHELL,
+                powerShell,
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
@@ -121,17 +138,38 @@ public class TtsService {
             String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
             int exitCode = process.waitFor();
             if (exitCode != 0) {
-                log.error("PowerShell TTS 执行失败，exitCode={}, output={}", exitCode, output);
-                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "服务端语音生成失败");
+                log.error("PowerShell TTS failed, exitCode={}, output={}", exitCode, output);
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Server TTS generation failed");
             }
             return output;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            log.error("执行 PowerShell TTS 被中断", exception);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "服务端语音生成失败");
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Server TTS generation was interrupted");
         } catch (IOException exception) {
-            log.error("执行 PowerShell TTS 失败", exception);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "服务端语音生成失败");
+            log.error("Failed to run PowerShell TTS", exception);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Server TTS generation failed");
         }
+    }
+
+    private Optional<String> resolvePowerShell() {
+        if (configuredPowerShellPath != null && !configuredPowerShellPath.isBlank() && Files.isExecutable(Path.of(configuredPowerShellPath))) {
+            return Optional.of(configuredPowerShellPath);
+        }
+        String systemRoot = System.getenv("SystemRoot");
+        if (systemRoot != null && !systemRoot.isBlank()) {
+            Path defaultPath = Path.of(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+            if (Files.isExecutable(defaultPath)) {
+                return Optional.of(defaultPath.toString());
+            }
+        }
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv == null || pathEnv.isBlank()) {
+            return Optional.empty();
+        }
+        return Arrays.stream(pathEnv.split(java.io.File.pathSeparator))
+                .map(directory -> Path.of(directory, "powershell.exe"))
+                .filter(Files::isExecutable)
+                .map(Path::toString)
+                .findFirst();
     }
 }

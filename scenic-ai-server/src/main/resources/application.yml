@@ -4,26 +4,46 @@ server:
 spring:
   application:
     name: scenic-ai-server
+  profiles:
+    default: dev
   datasource:
-    url: jdbc:h2:file:./data/scenic-ai-mvp;AUTO_SERVER=TRUE
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/scenic_ai?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
+    username: ${DB_USERNAME:scenic_ai}
+    password: ${DB_PASSWORD:}
   h2:
     console:
-      enabled: true
-      path: /h2-console
+      enabled: false
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: ${JPA_DDL_AUTO:validate}
     open-in-view: false
     properties:
       hibernate:
         format_sql: true
     show-sql: false
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
 app:
   admin:
-    username: admin
-    password: admin123
-    display-name: 灵山运营管理员
+    username: ${ADMIN_USERNAME:admin}
+    password-hash: ${ADMIN_PASSWORD_HASH:}
+    display-name: ${ADMIN_DISPLAY_NAME:Scenic AI Admin}
+  security:
+    jwt-secret: ${JWT_SECRET:}
+    token-ttl-minutes: ${JWT_TTL_MINUTES:480}
+  rate-limit:
+    chat-per-minute: ${CHAT_RATE_LIMIT_PER_MINUTE:30}
+    chat-burst: ${CHAT_RATE_LIMIT_BURST:10}
+  tts:
+    provider: ${TTS_PROVIDER:disabled}
+    powershell-path: ${TTS_POWERSHELL_PATH:}

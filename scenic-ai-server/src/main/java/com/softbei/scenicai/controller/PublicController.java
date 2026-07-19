@@ -15,6 +15,9 @@ import com.softbei.scenicai.service.RouteService;
 import com.softbei.scenicai.service.TtsService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -29,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/public")
+@RequestMapping({"/api/public", "/api/v1/public"})
 @RequiredArgsConstructor
 public class PublicController {
 
@@ -41,37 +44,37 @@ public class PublicController {
     @GetMapping("/overview")
     public ApiResponse<Map<String, Object>> overview() {
         return ApiResponse.success(Map.of(
-                "projectName", "景区导览服务 AI 数字人",
+                "projectName", "灵境智游",
                 "scenicName", "灵山胜境",
-                "welcomeMessage", "你好，我是灵山胜境中文导览助手，可以帮你问答、讲解景点和推荐路线。",
-                "mvpScope", List.of("游客问答", "景点讲解", "路线推荐", "后台知识库", "数据看板"),
+                "welcomeMessage", "你好，我是灵山胜境导览助手，可以为你讲解景点、推荐路线和解答游览问题。",
+                "mvpScope", List.of("景点讲解", "路线推荐", "游客咨询", "知识维护", "运营看板"),
                 "hotQuestions", List.of(
-                        "灵山大佛有什么亮点？",
-                        "九龙灌浴什么时候看合适？",
-                        "适合亲子游客的路线怎么走？"
+                        "灵山大佛有哪些必看的亮点？",
+                        "九龙灌浴演出什么时候观看比较合适？",
+                        "亲子游客怎么安排游览路线更轻松？"
                 )
         ));
     }
 
     @GetMapping("/attractions")
-    public ApiResponse<List<Attraction>> attractions() {
-        return ApiResponse.success(adminService.listAttractions());
+    public ApiResponse<Page<Attraction>> attractions(@PageableDefault(size = 50) Pageable pageable) {
+        return ApiResponse.success(adminService.listAttractions(pageable));
     }
 
     @PostMapping("/chat")
     public ApiResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
-        return ApiResponse.success(chatService.ask(request), "回答已生成");
+        return ApiResponse.success(chatService.ask(request), "Answer generated");
     }
 
     @PostMapping("/routes/recommend")
     public ApiResponse<RoutePlanResponse> recommend(@Valid @RequestBody RouteRequest request) {
-        return ApiResponse.success(routeService.recommend(request), "路线推荐完成");
+        return ApiResponse.success(routeService.recommend(request), "Route generated");
     }
 
     @PostMapping("/feedback")
-    public ApiResponse<String> feedback(@RequestBody FeedbackRequest request) {
+    public ApiResponse<String> feedback(@Valid @RequestBody FeedbackRequest request) {
         chatService.saveFeedback(request);
-        return ApiResponse.success("已收到反馈", "感谢你的反馈，我们会继续优化回答");
+        return ApiResponse.success("Feedback received", "Thank you for the feedback");
     }
 
     @GetMapping("/tts/voices")

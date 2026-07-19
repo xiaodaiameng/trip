@@ -12,11 +12,16 @@ const props = defineProps<{
 
 const hostRef = ref<HTMLDivElement | null>(null)
 
+const DEFAULT_CENTER: L.LatLngExpression = [31.4316, 120.0918]
+const DEFAULT_ZOOM = 16
+
 let map: L.Map | null = null
 let tileLayer: L.TileLayer | null = null
 let markerLayer: L.LayerGroup | null = null
 let routeLayer: L.LayerGroup | null = null
 let resizeObserver: ResizeObserver | null = null
+let renderFrame = 0
+let lastBoundsKey = ''
 
 const mappedAttractions = computed(() =>
   props.attractions.filter(
@@ -62,7 +67,15 @@ function fitMapBounds() {
     return
   }
 
-  map.fitBounds(bounds.pad(0.24), {
+  const paddedBounds = bounds.pad(0.24)
+  const key = paddedBounds.toBBoxString()
+  if (key === lastBoundsKey) {
+    return
+  }
+  lastBoundsKey = key
+
+  map.fitBounds(paddedBounds, {
+    animate: false,
     paddingTopLeft: [18, 18],
     paddingBottomRight: [132, 156],
   })
@@ -130,6 +143,16 @@ function renderMap() {
   fitMapBounds()
 }
 
+function scheduleRender() {
+  if (renderFrame) {
+    window.cancelAnimationFrame(renderFrame)
+  }
+  renderFrame = window.requestAnimationFrame(() => {
+    renderFrame = 0
+    renderMap()
+  })
+}
+
 onMounted(() => {
   if (!hostRef.value) {
     return
@@ -138,13 +161,20 @@ onMounted(() => {
   map = L.map(hostRef.value, {
     zoomControl: true,
     attributionControl: false,
-  })
+    preferCanvas: true,
+    fadeAnimation: false,
+    zoomAnimation: true,
+  }).setView(DEFAULT_CENTER, DEFAULT_ZOOM)
 
   tileLayer = L.tileLayer(
     'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
     {
       subdomains: ['1', '2', '3', '4'],
       maxZoom: 19,
+      maxNativeZoom: 18,
+      updateWhenIdle: true,
+      updateWhenZooming: false,
+      keepBuffer: 4,
     },
   )
   tileLayer.addTo(map)
@@ -152,11 +182,11 @@ onMounted(() => {
   markerLayer = L.layerGroup().addTo(map)
   routeLayer = L.layerGroup().addTo(map)
 
-  renderMap()
+  scheduleRender()
 
   resizeObserver = new ResizeObserver(() => {
     map?.invalidateSize()
-    fitMapBounds()
+    scheduleRender()
   })
   resizeObserver.observe(hostRef.value)
 })
@@ -164,12 +194,16 @@ onMounted(() => {
 watch(
   () => [props.attractions, props.routeStops],
   () => {
-    renderMap()
+    scheduleRender()
   },
   { deep: true },
 )
 
 onBeforeUnmount(() => {
+  if (renderFrame) {
+    window.cancelAnimationFrame(renderFrame)
+    renderFrame = 0
+  }
   resizeObserver?.disconnect()
   resizeObserver = null
 
@@ -208,10 +242,14 @@ onBeforeUnmount(() => {
   position: relative;
   overflow: hidden;
   min-height: 300px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
-  background: #eef4e8;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(220, 232, 210, 0.52);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 247, 237, 0.92)),
+    #eef4e8;
+  box-shadow:
+    0 20px 54px rgba(3, 17, 12, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
 }
 
 .scenic-map-canvas {
@@ -224,11 +262,12 @@ onBeforeUnmount(() => {
   right: 14px;
   z-index: 450;
   padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(255, 250, 244, 0.92);
-  color: #486255;
+  border: 1px solid rgba(232, 195, 112, 0.5);
+  border-radius: 8px;
+  background: rgba(247, 251, 242, 0.94);
+  color: #13251f;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
   backdrop-filter: blur(8px);
   box-shadow: 0 10px 24px rgba(61, 74, 59, 0.14);
 }
@@ -237,13 +276,19 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 4px;
   padding: 14px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
-  color: #dfe9e2;
+  border: 1px solid rgba(220, 232, 210, 0.52);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 247, 237, 0.92)),
+    rgba(247, 251, 241, 0.9);
+  color: #13251f;
+  box-shadow:
+    0 20px 54px rgba(3, 17, 12, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
 }
 
 .scenic-map-legend span {
+  color: #667568;
   font-size: 13px;
   line-height: 1.5;
 }
@@ -268,7 +313,7 @@ onBeforeUnmount(() => {
   width: 34px;
   height: 34px;
   border: 2px solid #fff6ef;
-  border-radius: 999px;
+  border-radius: 8px;
   background: linear-gradient(180deg, #d18a69 0%, #b76849 100%);
   color: #fff;
   font-size: 14px;

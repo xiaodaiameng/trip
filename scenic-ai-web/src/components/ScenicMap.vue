@@ -12,11 +12,16 @@ const props = defineProps<{
 
 const hostRef = ref<HTMLDivElement | null>(null)
 
+const DEFAULT_CENTER: L.LatLngExpression = [31.4316, 120.0918]
+const DEFAULT_ZOOM = 16
+
 let map: L.Map | null = null
 let tileLayer: L.TileLayer | null = null
 let markerLayer: L.LayerGroup | null = null
 let routeLayer: L.LayerGroup | null = null
 let resizeObserver: ResizeObserver | null = null
+let renderFrame = 0
+let lastBoundsKey = ''
 
 const mappedAttractions = computed(() =>
   props.attractions.filter(
@@ -107,13 +112,39 @@ function renderMap() {
   }
 
   if (routeAttractions.value.length > 0 && routeBounds.isValid()) {
-    map.fitBounds(routeBounds.pad(0.3))
+    fitBoundsOnce(routeBounds.pad(0.3))
     return
   }
 
   if (allBounds.isValid()) {
-    map.fitBounds(allBounds.pad(0.18))
+    fitBoundsOnce(allBounds.pad(0.18))
   }
+}
+
+function fitBoundsOnce(bounds: L.LatLngBounds) {
+  if (!map) {
+    return
+  }
+  const key = bounds.toBBoxString()
+  if (key === lastBoundsKey) {
+    return
+  }
+  lastBoundsKey = key
+  map.fitBounds(bounds, {
+    animate: false,
+    paddingTopLeft: [16, 16],
+    paddingBottomRight: [16, 16],
+  })
+}
+
+function scheduleRender() {
+  if (renderFrame) {
+    window.cancelAnimationFrame(renderFrame)
+  }
+  renderFrame = window.requestAnimationFrame(() => {
+    renderFrame = 0
+    renderMap()
+  })
 }
 
 onMounted(() => {
@@ -124,13 +155,20 @@ onMounted(() => {
   map = L.map(hostRef.value, {
     zoomControl: true,
     attributionControl: false,
-  })
+    preferCanvas: true,
+    fadeAnimation: false,
+    zoomAnimation: true,
+  }).setView(DEFAULT_CENTER, DEFAULT_ZOOM)
 
   tileLayer = L.tileLayer(
     'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
     {
       subdomains: ['1', '2', '3', '4'],
       maxZoom: 19,
+      maxNativeZoom: 18,
+      updateWhenIdle: true,
+      updateWhenZooming: false,
+      keepBuffer: 4,
     },
   )
   tileLayer.addTo(map)
@@ -138,7 +176,7 @@ onMounted(() => {
   markerLayer = L.layerGroup().addTo(map)
   routeLayer = L.layerGroup().addTo(map)
 
-  renderMap()
+  scheduleRender()
 
   resizeObserver = new ResizeObserver(() => {
     map?.invalidateSize()
@@ -149,12 +187,16 @@ onMounted(() => {
 watch(
   () => [props.attractions, props.routeStops],
   () => {
-    renderMap()
+    scheduleRender()
   },
   { deep: true },
 )
 
 onBeforeUnmount(() => {
+  if (renderFrame) {
+    window.cancelAnimationFrame(renderFrame)
+    renderFrame = 0
+  }
   resizeObserver?.disconnect()
   resizeObserver = null
 

@@ -29,7 +29,7 @@ const props = withDefaults(
     colors: () => ['#f5eefe', '#c084fc', '#8b5cf6'],
     pointCount: 26,
     baseThickness: 12,
-    speedMultiplier: 0.2,
+    speedMultiplier: 0.7,
   },
 )
 
@@ -48,7 +48,6 @@ const pointer = {
 }
 
 function makeRibbon(index: number, width: number, height: number): Ribbon {
-  const center = (props.colors.length - 1) / 2
   return {
     color: props.colors[index],
     thickness: Math.max(2, props.baseThickness - index * 2),
@@ -56,8 +55,8 @@ function makeRibbon(index: number, width: number, height: number): Ribbon {
     friction: 0.84 - index * 0.03,
     velocityX: 0,
     velocityY: 0,
-    offsetX: (index - center) * 10,
-    offsetY: (index % 2 === 0 ? -1 : 1) * 6,
+    offsetX: 0,
+    offsetY: 0,
     points: Array.from({ length: props.pointCount }, () => ({
       x: width / 2,
       y: height / 2,

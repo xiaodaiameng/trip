@@ -3,7 +3,9 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import DigitalHumanStage from './components/DigitalHumanStage.vue'
 import ScenicMap from './components/ScenicMap.vue'
 import StrandsBackground from './components/effects/StrandsBackground.vue'
+import heroImage from './assets/hero.png'
 import {
+  adminLogin,
   askQuestion,
   fetchAttractions,
   fetchDashboard,
@@ -20,6 +22,7 @@ import type {
   ChatResponse,
   ConversationRecord,
   DashboardResponse,
+  LoginResponse,
   Overview,
   RoutePlanResponse,
   TtsVoiceResponse,
@@ -28,15 +31,59 @@ import type {
 type SkinKey = 'caramel' | 'mint' | 'berry' | 'cocoa'
 type TtsMode = 'browser' | 'server'
 
+interface SpeechRecognitionAlternativeLike {
+  transcript: string
+}
+
+interface SpeechRecognitionResultLike {
+  0: SpeechRecognitionAlternativeLike
+  isFinal: boolean
+  length: number
+}
+
+interface SpeechRecognitionEventLike extends Event {
+  results: ArrayLike<SpeechRecognitionResultLike>
+}
+
+interface SpeechRecognitionErrorEventLike extends Event {
+  error: string
+}
+
+interface SpeechRecognitionLike extends EventTarget {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  maxAlternatives: number
+  onstart: ((this: SpeechRecognitionLike, event: Event) => void) | null
+  onresult: ((this: SpeechRecognitionLike, event: SpeechRecognitionEventLike) => void) | null
+  onerror: ((this: SpeechRecognitionLike, event: SpeechRecognitionErrorEventLike) => void) | null
+  onend: ((this: SpeechRecognitionLike, event: Event) => void) | null
+  start(): void
+  stop(): void
+  abort(): void
+}
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike
+
+interface SpeechWindow extends Window {
+  SpeechRecognition?: SpeechRecognitionCtor
+  webkitSpeechRecognition?: SpeechRecognitionCtor
+}
+
+const assistantName = '小灵'
 const apiBase = getApiBase()
 const browserSpeechSupported =
   typeof window !== 'undefined'
   && typeof window.speechSynthesis !== 'undefined'
   && typeof window.SpeechSynthesisUtterance !== 'undefined'
+const hearingSupported =
+  typeof window !== 'undefined'
+  && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
 const browserVoiceStorageKey = 'scenic-mobile-browser-voice'
 const serverVoiceStorageKey = 'scenic-mobile-server-voice'
 const ttsModeStorageKey = 'scenic-mobile-tts-mode'
+const adminProfileStorageKey = 'scenic-admin-profile'
 const preferredVoiceName = 'MicrosoftXiaoyi Online (Natural) - Chinese (Mainland)'
 
 const overview = ref<Overview | null>(null)
@@ -48,6 +95,12 @@ const publicLoading = ref(false)
 const publicError = ref('')
 const adminLoading = ref(false)
 const adminError = ref('')
+const adminMessage = ref('')
+const adminProfile = ref<LoginResponse | null>(null)
+const adminForm = reactive({
+  username: 'admin',
+  password: '',
+})
 
 const chatForm = reactive({
   question: '',
@@ -70,8 +123,8 @@ const routeLoading = ref(false)
 const routeError = ref('')
 const routeResponse = ref<RoutePlanResponse | null>(null)
 
-const spokenContent = ref('数字人已就位，可以随时开始讲解。')
-const narratorMessage = ref('数字人待机中。')
+const spokenContent = ref(`${assistantName}已就位，可以随时开始讲解。`)
+const narratorMessage = ref(`${assistantName}待机中。`)
 const speaking = ref(false)
 const autoSpeakEnabled = ref(true)
 const selectedSkin = ref<SkinKey>('caramel')
@@ -83,9 +136,13 @@ const selectedServerVoice = ref('')
 const ttsMode = ref<TtsMode>(browserSpeechSupported ? 'browser' : 'server')
 const ttsLoading = ref(false)
 const assistantPanelOpen = ref(false)
+const hearingEnabled = ref(false)
+const listening = ref(false)
+const recognitionTranscript = ref('')
 
 let activeAudio: HTMLAudioElement | null = null
 let activeAudioUrl: string | null = null
+let recognition: SpeechRecognitionLike | null = null
 let startupSpeechTimer = 0
 
 const interestOptions = ['文化', '拍照', '亲子', '演艺', '夜游', '休闲']
@@ -105,7 +162,7 @@ const overviewCards = computed(() => [
   {
     title: '服务模块',
     value: `${overview.value?.mvpScope.length ?? 0}`,
-    note: '问答、路线、地图、后台摘要',
+    note: '景点、路线、地图、运营摘要',
   },
   {
     title: '后端地址',
@@ -136,6 +193,18 @@ const activeVoiceLabel = computed(() => {
   return activeBrowserVoice.value?.name ?? '自动优选'
 })
 
+const hearingStatusLabel = computed(() => {
+  if (!hearingSupported) {
+    return '当前浏览器不支持听力'
+  }
+  if (listening.value) {
+    return `${assistantName}正在听`
+  }
+  return hearingEnabled.value ? '听力待命中' : '听力已关闭'
+})
+
+const hearingToggleLabel = computed(() => (hearingEnabled.value || listening.value ? '关闭听力' : '开启听力'))
+
 const topRecords = computed(() => records.value.slice(0, 4))
 const firstRouteAttraction = computed(() => {
   const firstStopName = routeResponse.value?.stops[0]?.attractionName
@@ -144,6 +213,30 @@ const firstRouteAttraction = computed(() => {
   }
   return attractions.value.find((item) => item.name === firstStopName) ?? null
 })
+
+function getRecognitionCtor() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  const speechWindow = window as SpeechWindow
+  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null
+}
+
+function resolveRecognitionError(error: string) {
+  if (error === 'not-allowed' || error === 'service-not-allowed') {
+    return '请先允许麦克风权限，然后再让小灵听你说话。'
+  }
+  if (error === 'no-speech') {
+    return '小灵刚才没有听到有效语音，你可以再说一遍。'
+  }
+  if (error === 'audio-capture') {
+    return '没有检测到可用麦克风，请检查设备后再试。'
+  }
+  if (error === 'network') {
+    return '语音识别暂时不可用，请稍后再试。'
+  }
+  return '语音识别启动失败，请换用最新版 Edge 或 Chrome 再试。'
+}
 
 function getVoiceScore(voice: SpeechSynthesisVoice) {
   const name = voice.name.toLowerCase()
@@ -279,6 +372,13 @@ function cleanupAudio() {
   }
 }
 
+function stopListeningSession() {
+  recognition?.abort()
+  recognition = null
+  listening.value = false
+  recognitionTranscript.value = ''
+}
+
 function stopSpeaking() {
   if (browserSpeechSupported) {
     window.speechSynthesis.cancel()
@@ -327,6 +427,7 @@ async function speakText(text: string) {
   }
 
   stopSpeaking()
+  stopListeningSession()
 
   if (ttsMode.value === 'server') {
     ttsLoading.value = true
@@ -371,6 +472,110 @@ async function speakText(text: string) {
   window.speechSynthesis.speak(utterance)
 }
 
+function closeHearing() {
+  hearingEnabled.value = false
+  stopListeningSession()
+  narratorMessage.value = `${assistantName}已停止收听。`
+}
+
+function openHearing() {
+  if (!hearingSupported) {
+    narratorMessage.value = '当前浏览器暂不支持语音输入，请使用最新版 Edge 或 Chrome。'
+    return
+  }
+  hearingEnabled.value = true
+  startListening()
+}
+
+function toggleHearing() {
+  if (hearingEnabled.value || listening.value) {
+    closeHearing()
+    return
+  }
+  openHearing()
+}
+
+function startListening() {
+  const RecognitionCtor = getRecognitionCtor()
+  if (!RecognitionCtor) {
+    narratorMessage.value = '当前浏览器暂不支持语音输入，请使用最新版 Edge 或 Chrome。'
+    return
+  }
+
+  stopSpeaking()
+  stopListeningSession()
+
+  let finalTranscript = ''
+  let failed = false
+  const nextRecognition = new RecognitionCtor()
+  recognition = nextRecognition
+  recognitionTranscript.value = ''
+
+  nextRecognition.lang = 'zh-CN'
+  nextRecognition.continuous = false
+  nextRecognition.interimResults = true
+  nextRecognition.maxAlternatives = 1
+
+  nextRecognition.onstart = () => {
+    listening.value = true
+    narratorMessage.value = `${assistantName}正在听，请直接说出你的问题。`
+  }
+
+  nextRecognition.onresult = (event) => {
+    let mergedTranscript = ''
+    for (let index = 0; index < event.results.length; index += 1) {
+      const result = event.results[index]
+      const segment = result[0]?.transcript ?? ''
+      mergedTranscript += segment
+      if (result.isFinal) {
+        finalTranscript += segment
+      }
+    }
+
+    const transcript = (finalTranscript || mergedTranscript).trim()
+    recognitionTranscript.value = transcript
+    chatForm.question = transcript
+  }
+
+  nextRecognition.onerror = (event) => {
+    failed = true
+    listening.value = false
+    recognition = null
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      hearingEnabled.value = false
+    }
+    narratorMessage.value = resolveRecognitionError(event.error)
+  }
+
+  nextRecognition.onend = () => {
+    listening.value = false
+    recognition = null
+
+    if (failed) {
+      return
+    }
+
+    const transcript = (finalTranscript || recognitionTranscript.value || chatForm.question).trim()
+    recognitionTranscript.value = ''
+    if (!transcript) {
+      narratorMessage.value = `${assistantName}这次没有听清，你可以再试一次。`
+      return
+    }
+
+    hearingEnabled.value = false
+    narratorMessage.value = `${assistantName}听到了，正在整理回答。`
+    void submitChat(transcript)
+  }
+
+  try {
+    nextRecognition.start()
+  } catch {
+    recognition = null
+    listening.value = false
+    narratorMessage.value = '语音输入没有成功开启，请检查麦克风权限后重试。'
+  }
+}
+
 function announce(text: string, speak = true) {
   const content = text.trim() || '没有可播报的内容。'
   spokenContent.value = content
@@ -400,6 +605,7 @@ function scheduleStartupSpeech(delayMs = 720) {
 
 function openAssistantPanel() {
   assistantPanelOpen.value = true
+  narratorMessage.value = `${assistantName}在线，可以朗读，也可以听你提问。`
 }
 
 function closeAssistantPanel() {
@@ -489,10 +695,13 @@ async function loadPublicData() {
   publicError.value = ''
   try {
     const [overviewData, attractionData] = await Promise.all([fetchOverview(), fetchAttractions()])
+    if (!overviewData.welcomeMessage.includes(assistantName)) {
+      overviewData.welcomeMessage = `可以叫我${assistantName}。${overviewData.welcomeMessage}`
+    }
     overview.value = overviewData
     attractions.value = attractionData
     spokenContent.value = overviewData.welcomeMessage
-    narratorMessage.value = '数字人待机中。'
+    narratorMessage.value = `${assistantName}待机中。`
   } catch (error) {
     publicError.value = error instanceof Error ? error.message : '加载移动端数据失败。'
   } finally {
@@ -503,15 +712,84 @@ async function loadPublicData() {
 async function loadAdminData() {
   adminLoading.value = true
   adminError.value = ''
+  if (!adminProfile.value?.token && !localStorage.getItem('scenic-admin-token')) {
+    adminError.value = '运营数据仅管理员可查看，请登录后台后再打开。'
+    adminLoading.value = false
+    return
+  }
   try {
     const [dashboardData, recordData] = await Promise.all([fetchDashboard(), fetchRecords()])
     dashboard.value = dashboardData
     records.value = recordData
   } catch (error) {
     adminError.value = error instanceof Error ? error.message : '加载运营数据失败。'
+    if (adminError.value.includes('管理员')) {
+      adminProfile.value = null
+      persistAdminSession(null)
+    }
   } finally {
     adminLoading.value = false
   }
+}
+
+function restoreAdminSession() {
+  const raw = localStorage.getItem(adminProfileStorageKey)
+  if (!raw) {
+    return
+  }
+  try {
+    const profile = JSON.parse(raw) as LoginResponse
+    if (profile?.token) {
+      adminProfile.value = profile
+      localStorage.setItem('scenic-admin-token', profile.token)
+    }
+  } catch {
+    persistAdminSession(null)
+  }
+}
+
+function persistAdminSession(profile: LoginResponse | null) {
+  if (!profile) {
+    localStorage.removeItem(adminProfileStorageKey)
+    localStorage.removeItem('scenic-admin-token')
+    return
+  }
+  localStorage.setItem(adminProfileStorageKey, JSON.stringify(profile))
+  localStorage.setItem('scenic-admin-token', profile.token)
+}
+
+async function loginToAdmin() {
+  if (!adminForm.username.trim() || !adminForm.password.trim()) {
+    adminMessage.value = '请输入管理员账号和密码。'
+    return
+  }
+
+  adminLoading.value = true
+  adminError.value = ''
+  adminMessage.value = ''
+  try {
+    const profile = await adminLogin({
+      username: adminForm.username.trim(),
+      password: adminForm.password,
+    })
+    adminProfile.value = profile
+    persistAdminSession(profile)
+    adminMessage.value = `欢迎回来，${profile.displayName}`
+    await loadAdminData()
+  } catch (error) {
+    adminMessage.value = error instanceof Error ? error.message : '登录失败，请稍后重试。'
+  } finally {
+    adminLoading.value = false
+  }
+}
+
+function logoutAdmin() {
+  adminProfile.value = null
+  dashboard.value = null
+  records.value = []
+  adminError.value = '运营数据仅管理员可查看，请登录后台后再打开。'
+  adminMessage.value = '已退出后台。'
+  persistAdminSession(null)
 }
 
 async function loadServerVoices() {
@@ -607,6 +885,8 @@ watch(assistantPanelOpen, (isOpen) => {
 })
 
 onMounted(async () => {
+  restoreAdminSession()
+
   const storedMode = localStorage.getItem(ttsModeStorageKey)
   if (storedMode === 'browser' || storedMode === 'server') {
     ttsMode.value = storedMode === 'browser' && !browserSpeechSupported ? 'server' : storedMode
@@ -658,6 +938,36 @@ onBeforeUnmount(() => {
       :scale="0.95"
     />
     <main class="content-shell">
+      <section
+        class="mobile-hero"
+        :style="{
+          backgroundImage: `linear-gradient(90deg, rgba(21, 38, 31, 0.9), rgba(21, 38, 31, 0.52)), url(${heroImage})`,
+        }"
+      >
+        <div class="mobile-hero-main">
+          <p class="eyebrow">灵境智游</p>
+          <h1>LingVista灵言</h1>
+          <p class="hero-copy">
+            古人有云，今人有灵。
+          </p>
+
+          <div class="mobile-nav-strip" aria-label="移动端功能导航">
+            <a class="nav-button" href="#mobile-map">地图</a>
+            <a class="nav-button" href="#mobile-chat">问答</a>
+            <a class="nav-button" href="#mobile-route">路线</a>
+            <a class="nav-button" href="#mobile-dashboard">运营</a>
+          </div>
+        </div>
+
+        <div class="hero-metrics">
+          <article v-for="card in overviewCards" :key="card.title" class="hero-metric">
+            <span>{{ card.title }}</span>
+            <strong>{{ card.value }}</strong>
+            <p>{{ card.note }}</p>
+          </article>
+        </div>
+      </section>
+
       <section class="section-card">
         <div class="section-head">
           <div>
@@ -679,7 +989,7 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section class="section-card">
+      <section id="mobile-map" class="section-card">
         <div class="section-head">
           <div>
             <p class="section-kicker">地图</p>
@@ -741,14 +1051,11 @@ onBeforeUnmount(() => {
             </div>
             <p class="body-text">{{ item.highlight }}</p>
             <p class="muted-text">建议停留 {{ item.suggestedDurationMinutes }} 分钟 · {{ item.openHours }}</p>
-            <div class="action-row">
-              <button type="button" class="ghost-button" @click="startNavigation(item)">开始导航</button>
-            </div>
           </article>
         </div>
       </section>
 
-      <section class="section-card">
+      <section id="mobile-chat" class="section-card">
         <div class="section-head">
           <div>
             <p class="section-kicker">智能问答</p>
@@ -826,7 +1133,7 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="section-card">
+      <section id="mobile-route" class="section-card">
         <div class="section-head">
           <div>
             <p class="section-kicker">路线推荐</p>
@@ -910,15 +1217,70 @@ onBeforeUnmount(() => {
         </article>
       </section>
 
-      <section class="section-card">
+      <section id="mobile-dashboard" class="section-card">
         <div class="section-head">
           <div>
             <p class="section-kicker">后台摘要</p>
             <h2>移动端运营信息</h2>
           </div>
+          <a
+            class="ghost-button mobile-download-button"
+            href="/downloads/scenic-questionnaire-data-package.zip"
+            download="景区问卷数据资料包汇总.zip"
+          >
+            下载资料包
+          </a>
         </div>
 
-        <p v-if="adminError" class="notice notice-error">{{ adminError }}</p>
+        <article v-if="!adminProfile" class="response-card">
+          <div class="record-head">
+            <div>
+              <strong>管理员入口</strong>
+              <p class="muted-text">运营数据需要管理员登录后查看，普通游客不会受影响。</p>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="field-label">
+              <span>账号</span>
+              <input v-model="adminForm.username" class="text-input" autocomplete="username" placeholder="请输入管理员账号" />
+            </label>
+            <label class="field-label">
+              <span>密码</span>
+              <input
+                v-model="adminForm.password"
+                type="password"
+                class="text-input"
+                autocomplete="current-password"
+                placeholder="请输入管理员密码"
+                @keyup.enter="loginToAdmin"
+              />
+            </label>
+          </div>
+          <div class="action-row">
+            <button type="button" class="primary-button" :disabled="adminLoading" @click="loginToAdmin">
+              {{ adminLoading ? '正在登录...' : '登录后台' }}
+            </button>
+          </div>
+          <p v-if="adminMessage" class="notice" :class="{ 'notice-error': !adminMessage.includes('欢迎') && !adminMessage.includes('退出') }">
+            {{ adminMessage }}
+          </p>
+        </article>
+
+        <article v-else class="response-card">
+          <div class="record-head">
+            <div>
+              <strong>欢迎，{{ adminProfile.displayName }}</strong>
+              <p class="muted-text">可以刷新运营摘要，或退出当前后台会话。</p>
+            </div>
+          </div>
+          <div class="action-row dual-row">
+            <button type="button" class="ghost-button" :disabled="adminLoading" @click="loadAdminData">刷新数据</button>
+            <button type="button" class="ghost-button" @click="logoutAdmin">退出后台</button>
+          </div>
+          <p v-if="adminMessage" class="muted-text">{{ adminMessage }}</p>
+        </article>
+
+        <p v-if="adminError" class="notice" :class="{ 'notice-error': !adminError.includes('管理员') }">{{ adminError }}</p>
         <p v-else-if="adminLoading" class="notice">正在加载后台数据...</p>
 
         <div v-if="dashboard" class="stat-grid">
@@ -985,8 +1347,8 @@ onBeforeUnmount(() => {
     <section v-if="assistantPanelOpen" class="assistant-sheet" aria-label="数字人控制面板">
       <div class="assistant-sheet-head">
         <div>
-          <p class="section-kicker">数字人控制</p>
-          <h2>声音和播报</h2>
+          <p class="section-kicker">小灵控制台</p>
+          <h2>声音、播报和听力</h2>
         </div>
         <button type="button" class="sheet-close" aria-label="关闭数字人控制面板" @click="closeAssistantPanel">×</button>
       </div>
@@ -994,12 +1356,20 @@ onBeforeUnmount(() => {
       <div class="voice-status">
         <p class="body-text">{{ narratorMessage }}</p>
         <p class="muted-text">当前音色：{{ activeVoiceLabel }}</p>
+        <p class="muted-text">听力状态：{{ hearingStatusLabel }}</p>
+        <p v-if="recognitionTranscript" class="muted-text">已听到：{{ recognitionTranscript }}</p>
         <p v-if="ttsLoading" class="muted-text">服务端正在生成音频...</p>
       </div>
 
       <div class="action-row dual-row">
         <button type="button" class="primary-button" @click="speakCurrentIntro">朗读开场</button>
         <button type="button" class="ghost-button" @click="stopSpeaking">停止朗读</button>
+      </div>
+
+      <div class="action-row">
+        <button type="button" class="ghost-button hearing-button" :disabled="!hearingSupported || chatLoading" @click="toggleHearing">
+          {{ hearingToggleLabel }}
+        </button>
       </div>
 
       <label class="switch-row">
@@ -1036,7 +1406,7 @@ onBeforeUnmount(() => {
           class="text-input"
           @change="setBrowserVoicePreference(selectedVoiceUri)"
         >
-          <option value="">自动优选更自然的中文音色</option>
+          <option value="">自动优选更自然的讲解音色</option>
           <option v-for="voice in availableVoices" :key="voice.voiceURI" :value="voice.voiceURI">
             {{ voice.name }} · {{ voice.lang }}
           </option>
@@ -1048,14 +1418,23 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mobile-app {
+  --surface: rgba(247, 251, 241, 0.9);
+  --surface-strong: rgba(255, 255, 255, 0.96);
+  --line: rgba(220, 232, 210, 0.52);
+  --line-strong: rgba(230, 186, 98, 0.56);
+  --ink: #13251f;
+  --muted: #667568;
+  --gold: #d9ad58;
+  --gold-strong: #e8c370;
+  --coral: #cf765c;
+  --mint: #88b99b;
   position: relative;
   isolation: isolate;
   overflow-x: hidden;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 223, 163, 0.08), transparent 26%),
-    radial-gradient(circle at 50% 100%, rgba(120, 227, 193, 0.06), transparent 32%),
-    #07110d;
+    linear-gradient(135deg, rgba(13, 30, 24, 0.96) 0%, rgba(18, 42, 33, 0.94) 34%, rgba(48, 55, 42, 0.92) 100%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 80px);
 }
 
 .mobile-strands {
@@ -1083,8 +1462,131 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   display: grid;
+  width: min(1180px, calc(100vw - 28px));
+  margin: 0 auto;
+  gap: 18px;
+  padding: 24px 0 calc(280px + env(safe-area-inset-bottom));
+}
+
+.mobile-hero {
+  position: relative;
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  min-height: 520px;
+  padding: 22px;
+  border: 1px solid rgba(231, 193, 112, 0.2);
+  border-radius: 8px;
+  background-position: center;
+  background-size: cover;
+  color: #f8fcf2;
+  box-shadow: 0 28px 80px rgba(5, 15, 12, 0.28);
+  overflow: hidden;
+}
+
+.mobile-hero-main {
+  display: grid;
   gap: 14px;
-  padding: 14px 14px calc(260px + env(safe-area-inset-bottom));
+  min-width: 0;
+  align-content: end;
+  min-height: 250px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: rgba(232, 195, 112, 0.88);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+h1 {
+  max-width: 860px;
+  margin: 0;
+  color: #ffffff;
+  font-size: clamp(44px, 17vw, 76px);
+  line-height: 1.02;
+  overflow-wrap: anywhere;
+}
+
+.hero-copy {
+  max-width: 760px;
+  margin: 0;
+  color: rgba(248, 252, 242, 0.86);
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.mobile-nav-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.nav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid rgba(248, 252, 242, 0.2);
+  border-radius: 8px;
+  background: rgba(248, 252, 242, 0.1);
+  color: rgba(248, 252, 242, 0.9);
+  font-size: 15px;
+  font-weight: 700;
+  backdrop-filter: blur(10px);
+}
+
+.nav-button:active,
+.nav-button:hover {
+  border-color: rgba(232, 195, 112, 0.62);
+  background: rgba(232, 195, 112, 0.2);
+  color: #ffffff;
+}
+
+.hero-metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hero-metric {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  min-height: 116px;
+  padding: 18px;
+  border: 1px solid rgba(232, 195, 112, 0.32);
+  border-radius: 8px;
+  background: rgba(12, 31, 25, 0.68);
+  color: #f8fcf2;
+  box-shadow: 0 22px 50px rgba(5, 16, 13, 0.24);
+  backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+.hero-metric span {
+  color: rgba(232, 195, 112, 0.88);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.hero-metric strong {
+  color: #ffffff;
+  font-size: 30px;
+  line-height: 1.1;
+  word-break: break-all;
+}
+
+.hero-metric p {
+  margin: 0;
+  color: rgba(248, 252, 242, 0.72);
+  font-size: 14px;
+  line-height: 1.65;
 }
 
 .section-card,
@@ -1094,17 +1596,66 @@ onBeforeUnmount(() => {
 .source-card,
 .record-card,
 .assistant-sheet {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 22px;
-  background: rgba(7, 18, 13, 0.86);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 247, 237, 0.92)),
+    var(--surface);
+  color: var(--ink);
+  box-shadow:
+    0 20px 54px rgba(3, 17, 12, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(14px);
+}
+
+.section-card::before,
+.stat-card::before,
+.attraction-card::before,
+.response-card::before,
+.source-card::before,
+.record-card::before,
+.assistant-sheet::before,
+.hero-metric::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: linear-gradient(115deg, transparent 0%, transparent 42%, rgba(255, 255, 255, 0.46) 50%, transparent 58%, transparent 100%);
+  transform: translateX(-120%);
+  transition: transform 0.78s ease;
+  pointer-events: none;
+}
+
+.section-card:hover::before,
+.stat-card:hover::before,
+.attraction-card:hover::before,
+.response-card:hover::before,
+.source-card:hover::before,
+.record-card:hover::before,
+.assistant-sheet:hover::before,
+.hero-metric:hover::before {
+  transform: translateX(120%);
+}
+
+.section-card > *,
+.stat-card > *,
+.attraction-card > *,
+.response-card > *,
+.source-card > *,
+.record-card > *,
+.assistant-sheet > *,
+.hero-metric > * {
+  position: relative;
+  z-index: 1;
 }
 
 .section-card,
 .assistant-sheet {
   display: grid;
-  gap: 14px;
-  padding: 16px;
+  gap: 18px;
+  padding: 18px;
 }
 
 .section-head,
@@ -1119,10 +1670,9 @@ onBeforeUnmount(() => {
 
 .section-kicker {
   margin: 0 0 4px;
-  color: rgba(235, 242, 236, 0.6);
+  color: var(--gold);
   font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-weight: 800;
 }
 
 h2,
@@ -1132,21 +1682,21 @@ p {
 }
 
 h2 {
-  color: #eef6ef;
+  color: var(--ink);
   font-size: 23px;
   line-height: 1.2;
 }
 
 .section-tip,
 .muted-text {
-  color: rgba(235, 242, 236, 0.68);
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
 }
 
 .body-text,
 .answer-text {
-  color: #eef6ef;
+  color: #20342b;
   line-height: 1.75;
 }
 
@@ -1186,14 +1736,14 @@ h2 {
 
 .stat-label,
 .field-label span {
-  color: rgba(235, 242, 236, 0.7);
+  color: var(--muted);
   font-size: 13px;
 }
 
 .stat-value {
   display: block;
   margin: 6px 0 4px;
-  color: #f7fbf7;
+  color: var(--ink);
   font-size: 26px;
   line-height: 1.1;
   word-break: break-all;
@@ -1203,10 +1753,16 @@ h2 {
   width: 100%;
   min-height: 44px;
   padding: 12px 14px;
-  border: 1px solid rgba(235, 242, 236, 0.16);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(31, 63, 50, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
   color: #11211a;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+}
+
+.text-input:focus {
+  outline: 2px solid rgba(232, 195, 112, 0.38);
+  border-color: rgba(232, 195, 112, 0.72);
 }
 
 .textarea {
@@ -1227,39 +1783,40 @@ h2 {
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 8px;
   cursor: pointer;
 }
 
 .primary-button {
-  background: linear-gradient(135deg, #e6bf83 0%, #8fe0bd 100%);
-  color: #0a1f16;
+  background: linear-gradient(135deg, #214f3d, #357253);
+  color: #ffffff;
   font-weight: 700;
+  box-shadow: 0 14px 28px rgba(17, 62, 43, 0.18);
 }
 
 .ghost-button {
-  border-color: rgba(235, 242, 236, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-  color: #eef6ef;
+  border-color: rgba(31, 63, 50, 0.18);
+  background: rgba(255, 255, 255, 0.78);
+  color: #20342b;
 }
 
 .chip-button {
-  border-color: rgba(235, 242, 236, 0.14);
-  background: rgba(255, 255, 255, 0.04);
-  color: #eef6ef;
+  border-color: rgba(25, 58, 47, 0.14);
+  background: rgba(244, 248, 239, 0.9);
+  color: #20342b;
 }
 
 .chip-button.active,
 .ghost-button.active {
-  border-color: rgba(230, 191, 131, 0.58);
-  background: rgba(230, 191, 131, 0.12);
+  border-color: rgba(136, 185, 155, 0.86);
+  background: rgba(219, 238, 222, 0.86);
 }
 
 .switch-row {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: rgba(235, 242, 236, 0.82);
+  color: var(--muted);
   font-size: 14px;
 }
 
@@ -1268,18 +1825,19 @@ h2 {
   align-items: center;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid rgba(230, 191, 131, 0.36);
-  border-radius: 999px;
-  background: rgba(230, 191, 131, 0.12);
-  color: #f5dfbf;
+  border: 1px solid rgba(232, 195, 112, 0.56);
+  border-radius: 8px;
+  background: rgba(255, 246, 222, 0.86);
+  color: #73551b;
   font-size: 12px;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .map-nav-button {
   min-height: 36px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: 8px;
   white-space: nowrap;
 }
 
@@ -1302,9 +1860,9 @@ h2 {
   place-items: center;
   width: 38px;
   height: 38px;
-  border-radius: 12px;
-  background: rgba(143, 224, 189, 0.14);
-  color: #d7f5ea;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(232, 195, 112, 0.24), rgba(136, 185, 155, 0.24));
+  color: #254a39;
   font-weight: 700;
 }
 
@@ -1312,21 +1870,21 @@ h2 {
   display: grid;
   gap: 8px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(235, 242, 236, 0.08);
+  border-bottom: 1px solid rgba(31, 63, 50, 0.1);
 }
 
 .notice {
   padding: 12px 14px;
-  border: 1px solid rgba(230, 191, 131, 0.24);
-  border-radius: 14px;
-  background: rgba(230, 191, 131, 0.08);
-  color: #f6e8cc;
+  border: 1px solid rgba(232, 195, 112, 0.44);
+  border-radius: 8px;
+  background: rgba(255, 248, 229, 0.92);
+  color: #73551b;
 }
 
 .notice-error {
-  border-color: rgba(234, 129, 129, 0.3);
-  background: rgba(234, 129, 129, 0.1);
-  color: #ffd4d4;
+  border-color: rgba(207, 118, 92, 0.42);
+  background: rgba(255, 238, 232, 0.94);
+  color: #7c3c2d;
 }
 
 .floating-assistant {
@@ -1341,10 +1899,13 @@ h2 {
 }
 
 .floating-stage-shell {
-  width: clamp(150px, 38vw, 220px);
-  height: clamp(240px, 40vh, 340px);
-  border-radius: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0));
+  width: clamp(110px, 30vw, 170px);
+  height: clamp(190px, 32vh, 290px);
+  border: 1px solid rgba(232, 195, 112, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.08)),
+    linear-gradient(135deg, rgba(48, 91, 67, 0.26), rgba(232, 195, 112, 0.12));
   filter: drop-shadow(0 18px 28px rgba(9, 18, 13, 0.28));
   overflow: hidden;
   pointer-events: auto;
@@ -1356,12 +1917,13 @@ h2 {
 }
 
 .floating-expand {
-  min-height: 40px;
-  padding: 0 16px;
-  border-color: rgba(223, 210, 193, 0.72);
-  border-radius: 999px;
-  background: rgba(255, 248, 242, 0.96);
-  color: #604738;
+  min-height: 38px;
+  padding: 0 12px;
+  border-color: rgba(232, 195, 112, 0.5);
+  border-radius: 8px;
+  background: rgba(247, 251, 242, 0.94);
+  color: var(--ink);
+  font-weight: 800;
   box-shadow: 0 10px 28px rgba(15, 22, 18, 0.18);
   pointer-events: auto;
 }
@@ -1370,8 +1932,8 @@ h2 {
   position: fixed;
   inset: 0;
   z-index: 720;
-  background: rgba(3, 9, 6, 0.56);
-  backdrop-filter: blur(8px);
+  background: rgba(8, 18, 15, 0.62);
+  backdrop-filter: blur(12px);
 }
 
 .assistant-sheet {
@@ -1388,12 +1950,21 @@ h2 {
   width: 44px;
   min-width: 44px;
   padding: 0;
-  border-color: rgba(235, 242, 236, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #eef6ef;
+  border-color: rgba(31, 63, 50, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
   font-size: 26px;
   line-height: 1;
+}
+
+.mobile-download-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 14px;
+  white-space: nowrap;
 }
 
 @media (min-width: 720px) {
@@ -1403,11 +1974,43 @@ h2 {
     padding-bottom: 300px;
   }
 
+  .hero-metrics,
+  .stat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .attraction-list,
+  .record-list,
+  .source-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .assistant-sheet {
     width: min(720px, calc(100vw - 28px));
     left: 50%;
     right: auto;
     transform: translateX(-50%);
+  }
+}
+
+@media (max-width: 520px) {
+  .mobile-download-button {
+    width: 100%;
+  }
+
+  .mobile-hero {
+    min-height: 500px;
+    padding: 18px 14px;
+  }
+
+  .mobile-nav-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  h1 {
+    font-size: 42px;
   }
 }
 </style>

@@ -10,6 +10,9 @@ import com.softbei.scenicai.model.KnowledgeEntry;
 import com.softbei.scenicai.service.AdminService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,10 +22,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 @RestController
-@RequestMapping("/api/admin")
+@RequestMapping({"/api/admin", "/api/v1/admin"})
 @RequiredArgsConstructor
 public class AdminController {
 
@@ -30,38 +31,38 @@ public class AdminController {
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ApiResponse.success(adminService.login(request), "登录成功");
+        return ApiResponse.success(adminService.login(request), "Login succeeded");
     }
 
     @GetMapping("/attractions")
-    public ApiResponse<List<Attraction>> attractions() {
-        return ApiResponse.success(adminService.listAttractions());
+    public ApiResponse<Page<Attraction>> attractions(@PageableDefault(size = 20) Pageable pageable) {
+        return ApiResponse.success(adminService.listAttractions(pageable));
     }
 
     @GetMapping("/knowledge")
-    public ApiResponse<List<KnowledgeEntry>> knowledge() {
-        return ApiResponse.success(adminService.listKnowledge());
+    public ApiResponse<Page<KnowledgeEntry>> knowledge(@PageableDefault(size = 20) Pageable pageable) {
+        return ApiResponse.success(adminService.listKnowledge(pageable));
     }
 
     @PostMapping("/knowledge")
     public ApiResponse<KnowledgeEntry> createKnowledge(@Valid @RequestBody KnowledgeRequest request) {
-        return ApiResponse.success(adminService.createKnowledge(request), "知识条目已新增");
+        return ApiResponse.success(adminService.createKnowledge(request), "Knowledge entry created");
     }
 
     @PutMapping("/knowledge/{id}")
     public ApiResponse<KnowledgeEntry> updateKnowledge(@PathVariable Long id, @Valid @RequestBody KnowledgeRequest request) {
-        return ApiResponse.success(adminService.updateKnowledge(id, request), "知识条目已更新");
+        return ApiResponse.success(adminService.updateKnowledge(id, request), "Knowledge entry updated");
     }
 
     @DeleteMapping("/knowledge/{id}")
     public ApiResponse<Void> deleteKnowledge(@PathVariable Long id) {
         adminService.deleteKnowledge(id);
-        return ApiResponse.success(null, "知识条目已删除");
+        return ApiResponse.success(null, "Knowledge entry deleted");
     }
 
     @GetMapping("/records")
-    public ApiResponse<List<ConversationRecord>> records() {
-        return ApiResponse.success(adminService.listRecords());
+    public ApiResponse<Page<ConversationRecord>> records(@PageableDefault(size = 20) Pageable pageable) {
+        return ApiResponse.success(adminService.listRecords(pageable));
     }
 
     @GetMapping("/dashboard")

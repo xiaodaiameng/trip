@@ -1,0 +1,61 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.secret
+*.secrets
+
+# Spring Boot local/private configuration
+scenic-ai-server/src/main/resources/application-local.yml
+scenic-ai-server/src/main/resources/application-*.local.yml
+scenic-ai-server/src/main/resources/application-dev.yml
+scenic-ai-server/src/main/resources/application-prod.yml
+scenic-ai-server/src/main/resources/application-production.yml
+scenic-ai-server/src/main/resources/application-secret.yml
+scenic-ai-server/src/main/resources/application-secrets.yml
+scenic-ai-server/src/main/resources/static/
+
+# Local database files
+scenic-ai-server/data/
+*.mv.db
+*.lock.db
+*.trace.db
+*.h2.db
+*.sqlite
+*.sqlite3
+
+# Build outputs
+scenic-ai-server/target/
+scenic-ai-web/dist/
+scenic-ai-web/dist-ssr/
+scenic-ai-web/mobile/dist/
+scenic-ai-web/mobile/dist-ssr/
+
+# Dependencies
+node_modules/
+scenic-ai-web/node_modules/
+scenic-ai-web/mobile/node_modules/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# IDE and OS files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local browser/test artifacts
+.chrome-mobile-check/
+mobile-ui-check*.png
